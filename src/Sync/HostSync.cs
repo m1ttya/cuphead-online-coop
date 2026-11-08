@@ -80,6 +80,7 @@ namespace CupheadOnline.Sync
 
         public static void OnClientJoined(Connection connection)
         {
+            DeathMenuInput.Reset();
             active = true;
             MusicSync.ResetHost();
             RemoteInput.ResetHost();
@@ -96,6 +97,7 @@ namespace CupheadOnline.Sync
 
         public static void OnSessionEnded()
         {
+            DeathMenuInput.Reset();
             if (!active) return;
             active = false;
             MusicSync.ResetHost();

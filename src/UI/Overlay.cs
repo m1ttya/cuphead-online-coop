@@ -142,7 +142,8 @@ namespace CupheadOnline.UI
                 {
                     GUILayout.Label("You are player 2. Use your keyboard/controller as usual;\nthe host's game runs the action and streams it to you.");
                 }
-                if (Session.State == LinkState.Connected) GUILayout.Label(CupheadOnline.Sync.RemoteInput.Summary(Session.IsHost));
+                if (Session.State == LinkState.Connected) GUILayout.Label(CupheadOnline.Sync.RemoteInput.Summary(Session.IsHost).Replace(" | ", "\n"));
+                if (Session.IsClient) GUILayout.Label("Button captions: " + CupheadOnline.Sync.GlyphSync.LocalDevice);
                 if (GUILayout.Button(Session.Role == Role.Host ? "Stop hosting" : "Disconnect"))
                 {
                     Session.Stop("you disconnected");

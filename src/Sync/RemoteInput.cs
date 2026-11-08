@@ -57,10 +57,11 @@ namespace CupheadOnline.Sync
         private readonly Edges fixedLoop = new Edges();
         private readonly byte[] observedPresses = new byte[PadState.ActionCount];
         private readonly float[] pressReceivedAt = new float[PadState.ActionCount];
+        private uint suppressedHeld;
 
         private sealed class Edges
         {
-            /// <summary>Presses that waited this long (realtime) for a fixed step are dropped, e.g. menu taps while paused.</summary>
+            /// <summary>Expire unpolled presses in both loops, including gameplay taps first read by a death menu.</summary>
             private const float StaleAfter = 0.25f;
 
             public readonly byte[] SeenPresses = new byte[PadState.ActionCount];
@@ -81,7 +82,18 @@ namespace CupheadOnline.Sync
                 Buffer.BlockCopy(latest.Presses, 0, SeenPresses, 0, SeenPresses.Length);
             }
 
-            public void Advance(PadState latest, double step, bool dropStale, float[] receivedAt)
+            public void Suppress(PadState latest, uint mask)
+            {
+                computedStep = -1;
+                for (int i = 0; i < PadState.ActionCount; i++)
+                {
+                    if ((mask & (1u << i)) == 0) continue;
+                    SeenPresses[i] = latest.Presses[i];
+                    Held[i] = Down[i] = Up[i] = false;
+                }
+            }
+
+            public void Advance(PadState latest, double step, float[] receivedAt, uint suppressed)
             {
                 if (step == computedStep) return;
                 computedStep = step;
@@ -90,10 +102,10 @@ namespace CupheadOnline.Sync
                 {
                     // Age the press itself, not the time since physics last asked. The first fresh dash after
                     // a pause/scene load must survive even if FixedUpdate has not polled us for several seconds.
-                    bool fresh = !dropStale || now - receivedAt[i] <= StaleAfter;
+                    bool fresh = now - receivedAt[i] <= StaleAfter && (suppressed & (1u << i)) == 0;
                     bool newPress = latest.Presses[i] != SeenPresses[i] && fresh;
                     SeenPresses[i] = latest.Presses[i];
-                    bool want = (latest.Held & (1u << i)) != 0 || newPress;
+                    bool want = (suppressed & (1u << i)) == 0 && ((latest.Held & (1u << i)) != 0 || newPress);
                     bool was = Held[i];
                     Down[i] = (want && !was && fresh) || newPress;
                     Up[i] = !want && was;
@@ -106,6 +118,7 @@ namespace CupheadOnline.Sync
         public void Reset()
         {
             Latest.Held = 0;
+            suppressedHeld = 0;
             Array.Clear(Latest.Axes, 0, Latest.Axes.Length);
             frameLoop.Reset(Latest);
             fixedLoop.Reset(Latest);
@@ -116,6 +129,7 @@ namespace CupheadOnline.Sync
         /// <summary>Timestamp changed counters at packet arrival, including presses made while physics is paused.</summary>
         public void ObservePresses()
         {
+            suppressedHeld &= Latest.Held; // a held menu button becomes eligible only after an observed release
             for (int i = 0; i < PadState.ActionCount; i++)
             {
                 if (observedPresses[i] == Latest.Presses[i]) continue;
@@ -131,16 +145,23 @@ namespace CupheadOnline.Sync
             Buffer.BlockCopy(Latest.Presses, 0, fixedLoop.SeenPresses, 0, PadState.ActionCount);
         }
 
+        public void SuppressUntilRelease(uint mask)
+        {
+            suppressedHeld |= Latest.Held & mask;
+            frameLoop.Suppress(Latest, mask);
+            fixedLoop.Suppress(Latest, mask);
+        }
+
         /// <summary>The edge state for the loop that is asking: one step per rendered frame or per fixed step.</summary>
         private Edges Advance()
         {
             ObservePresses(); // also supports the scripted local test pad
             if (Time.inFixedTimeStep)
             {
-                fixedLoop.Advance(Latest, Time.fixedTime, true, pressReceivedAt);
+                fixedLoop.Advance(Latest, Time.fixedTime, pressReceivedAt, suppressedHeld);
                 return fixedLoop;
             }
-            frameLoop.Advance(Latest, Time.frameCount, false, pressReceivedAt);
+            frameLoop.Advance(Latest, Time.frameCount, pressReceivedAt, suppressedHeld);
             return frameLoop;
         }
 
@@ -208,14 +229,18 @@ namespace CupheadOnline.Sync
         // ---- client sampling ----
         private static readonly PadState local = new PadState();
         private static uint localSeq;
+        private static uint localDown;
         private static int sampledFrame = -1;
+        private static float sampledAt = -100f, receivedAt = -100f;
         private static EventInfo inputUpdated;
         private static readonly Action<Rewired.UpdateLoopType> onInputUpdated = OnInputUpdated;
 
         public static void ResetClient()
         {
             localSeq = 0;
+            localDown = 0;
             sampledFrame = -1;
+            sampledAt = -100f;
             local.Held = 0;
             Array.Clear(local.Presses, 0, local.Presses.Length);
             Array.Clear(local.Axes, 0, local.Axes.Length);
@@ -250,6 +275,11 @@ namespace CupheadOnline.Sync
             PadState state = host ? Remote.Latest : (Scripted ?? local);
             string result = (host ? "Received" : "Sent") + " input: Dash=" + state.Presses[7] + ", Switch=" + state.Presses[5];
             if (host) result += " | Physics edges: Dash=" + Remote.FixedDownCount(7) + ", Switch=" + Remote.FixedDownCount(5);
+            uint held = state.Held;
+            result += " | Held=" + (((held >> 7) & 1) != 0 ? "Dash " : "") + (((held >> 5) & 1) != 0 ? "Switch" : "");
+            if ((held & ((1u << 7) | (1u << 5))) == 0) result += "none";
+            if (host && hasRemote) result += " | Input age=" + (Time.realtimeSinceStartup - receivedAt).ToString("0.00") + "s";
+            if (!host && sampledFrame >= 0) result += " | Sample age=" + (Time.realtimeSinceStartup - sampledAt).ToString("0.00") + "s";
             return result;
         }
 
@@ -274,21 +304,27 @@ namespace CupheadOnline.Sync
             try
             {
                 ClientController.EnsureAssigned(player);
-                uint held = 0;
+                uint held = 0, down = 0;
                 for (int i = 0; i < PadState.ActionCount; i++)
                 {
                     if (i == 9 || i == 10 || i == 17 || i == 24 || i == 25) continue; // unused ids
                     bool pressed = player.GetButton(i);
                     if (pressed) held |= 1u << i;
+                    bool edge = player.GetButtonDown(i);
+                    if (edge) down |= 1u << i;
                     // A held transition also recovers a press when Rewired's down edge was unavailable at sampling.
-                    if (player.GetButtonDown(i) || (pressed && (local.Held & (1u << i)) == 0)) local.Presses[i]++;
+                    // Buffered GetButtonDown may remain true across frames, including after release. Do not
+                    // turn that one native press into new network presses that can leak into a later menu.
+                    if ((edge && (localDown & (1u << i)) == 0) || (pressed && (local.Held & (1u << i)) == 0)) local.Presses[i]++;
                 }
                 local.Held = held;
+                localDown = down;
                 for (int i = 0; i < PadState.AxisActions.Length; i++)
                 {
                     local.Axes[i] = player.GetAxis(PadState.AxisActions[i]);
                 }
                 sampledFrame = Time.frameCount;
+                sampledAt = Time.realtimeSinceStartup;
             }
             finally
             {
@@ -305,6 +341,7 @@ namespace CupheadOnline.Sync
         {
             latestSeq = 0;
             hasRemote = false;
+            receivedAt = -100f;
             Remote.Reset();
         }
 
@@ -326,6 +363,7 @@ namespace CupheadOnline.Sync
             if (hasRemote && (int)(seq - latestSeq) <= 0) return; // stale / reordered
             Remote.Latest.Read(r);
             lastInputTime = now;
+            receivedAt = Time.realtimeSinceStartup;
             released = false;
             Remote.ObservePresses();
             if (!hasRemote)

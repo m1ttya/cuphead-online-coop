@@ -73,6 +73,30 @@ internal static class Program
         Check(!pad.AnyButton() && !pad.ButtonDown(7), "reset releases held state and old counters");
         Check(!pad.Button(-1) && !pad.ButtonDown(27) && pad.Axis(999) == 0f, "invalid action IDs are neutral");
 
+        var menuPad = new VirtualPad(); menuPad.Reset();
+        Step(14f, true); menuPad.Latest.Presses[13]++; menuPad.Latest.Presses[15]++; menuPad.ObservePresses();
+        menuPad.ButtonDown(2); // gameplay polls physics, but no Update consumer has asked for menu buttons
+        Step(17f, false);
+        Check(!menuPad.ButtonDown(13) && !menuPad.ButtonDown(15), "old combat presses cannot replay as Accept or Equip when the death menu first polls Update");
+        Step(17.1f, false); menuPad.Latest.Held = (1u << 13) | (1u << 15); menuPad.Latest.Presses[13]++; menuPad.Latest.Presses[15]++; menuPad.ObservePresses();
+        menuPad.SuppressUntilRelease((1u << 13) | (1u << 15));
+        Check(!menuPad.ButtonDown(13) && !menuPad.ButtonDown(15), "death-menu boundary discards a fresh A/Y from its opening animation");
+        Step(17.12f, false);
+        Check(!menuPad.Button(13) && !menuPad.ButtonDown(15), "holding combat A/Y cannot activate the newly ready menu");
+        menuPad.Latest.Held = 0; menuPad.ObservePresses(); Step(17.14f, false); menuPad.Button(13);
+        menuPad.Latest.Presses[13]++; menuPad.ObservePresses(); Step(17.16f, false);
+        Check(menuPad.ButtonDown(13) && !menuPad.ButtonDown(15), "a fresh Accept after release still selects Retry");
+        Step(17.18f, true); menuPad.Latest.Presses[7]++; menuPad.ObservePresses();
+        menuPad.SuppressUntilRelease((1u << 13) | (1u << 15));
+        Check(menuPad.ButtonDown(7), "menu A/Y gate does not discard a fresh gameplay dash");
+        menuPad.Reset(); Step(17.2f, false); menuPad.Latest.Presses[15]++; menuPad.ObservePresses();
+        Check(menuPad.ButtonDown(15), "reset clears menu suppression for a new session");
+
+        Check(ButtonCaption.Format("A", null, false) == "A" && ButtonCaption.Format("Left Shoulder", null, false) == "LB" && ButtonCaption.Format("Right Trigger +", null, false) == "RT",
+            "explicit gamepad maps keep native A/LB/RT caption names");
+        Check(ButtonCaption.Format("Left Shift", "Левый Shift", true) == "SHIFT" && ButtonCaption.Format("Space", "Пробел", false) == "ПРОБЕЛ" && ButtonCaption.Format("", "unused", false) == "",
+            "explicit keyboard captions preserve localization and unbound actions");
+
         RemoteInput.ResetHost(); Step(20f, false);
         Input(uint.MaxValue, 1u << 7, 1, 0);
         Input(0, 0, 2, 0.1);
@@ -112,6 +136,30 @@ internal static class Program
         RemoteInput.ResetClient();
         Check(RemoteInput.Summary(false).Contains("Dash=0, Switch=0"), "new client session clears cached local controller state");
         Session.Role = Role.None;
+
+        var bufferedTransport = new MemoryTransport(); var bufferedSender = new Connection(bufferedTransport);
+        var bufferedInbox = new MemoryTransport(); var bufferedReceiver = new Connection(bufferedInbox);
+        PadState bufferedState = null;
+        bufferedReceiver.OnMessage += (type, r) => { if (type == MsgType.Input) { r.U32(); bufferedState = new PadState(); bufferedState.Read(r); } };
+        Action sampleBuffered = () =>
+        {
+            Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+            RemoteInput.SampleAndSend(bufferedSender); bufferedSender.Flush();
+            foreach (byte[] packet in bufferedTransport.Sent) bufferedInbox.Received.Enqueue(packet);
+            bufferedTransport.Sent.Clear(); bufferedReceiver.Receive();
+        };
+        Session.Role = Role.Client;
+        Rewired.ReInput.players.Local.Held = 1u << 7; Rewired.ReInput.players.Local.Down = 1u << 7;
+        Step(22f, false); sampleBuffered();
+        Rewired.ReInput.players.Local.Held = 0; // the native down buffer outlives the physical release
+        Step(22.02f, false); sampleBuffered(); Step(22.04f, false); sampleBuffered();
+        Check(bufferedState.Presses[7] == 1 && bufferedState.Held == 0,
+            "a buffered native GetButtonDown is sent once even when it remains true after release");
+        Rewired.ReInput.players.Local.Held = 1u << 7;
+        Step(22.06f, false); sampleBuffered();
+        Check(bufferedState.Presses[7] == 2,
+            "a second physical held transition survives an overlapping native down buffer");
+        RemoteInput.ResetClient(); Session.Role = Role.None;
 
         var localLabels = new InputLabels(); var remoteLabels = new InputLabels();
         senderTransport = new MemoryTransport(); sender = new Connection(senderTransport);

@@ -48,6 +48,7 @@ namespace CupheadOnline.Sync
     {
         public static VirtualPad HostPad;
         public static int KeyboardPulse;
+        public static float CaptionFailureUntil;
         public static readonly bool ReadOnlySaves = Environment.GetEnvironmentVariable("CUPHEAD_ONLINE_TEST_READONLY") == "1";
         private static bool keepInvincible, keepRunning;
 
@@ -56,6 +57,7 @@ namespace CupheadOnline.Sync
 
         private static MonoBehaviour runnerBehaviour;
         private static string signalDirectory;
+        private static ushort rememberedSerial;
 
         public static void Start(MonoBehaviour runner)
         {
@@ -128,6 +130,16 @@ namespace CupheadOnline.Sync
                         float until = Time.realtimeSinceStartup + F(a, 2, 60f);
                         while (!InScene(a[1]) && Time.realtimeSinceStartup < until) yield return null;
                         Log(InScene(a[1]) ? "PASS scene " + a[1] : "FAIL timed out waiting for scene " + a[1] + " (now " + SceneManager.GetActiveScene().name + ")");
+                        break;
+                    }
+                    case "rememberscene":
+                        rememberedSerial = HostSync.CurrentSerial;
+                        break;
+                    case "waitreload":
+                    {
+                        float until = Time.realtimeSinceStartup + F(a, 1, 60f);
+                        while ((HostSync.CurrentSerial == rememberedSerial || SceneLoader.CurrentlyLoading) && Time.realtimeSinceStartup < until) yield return null;
+                        Log((HostSync.CurrentSerial != rememberedSerial && !SceneLoader.CurrentlyLoading ? "PASS " : "FAIL ") + "scene reload " + rememberedSerial + " -> " + HostSync.CurrentSerial);
                         break;
                     }
                     case "waitp2":
@@ -246,6 +258,33 @@ namespace CupheadOnline.Sync
                     case "gameover":
                         if (LevelGameOverGUI.Current != null) LevelGameOverGUI.Current.In(false);
                         else Log("FAIL no game over UI");
+                        break;
+                    case "defeat":
+                        foreach (PlayerId id in new[] { PlayerId.PlayerOne, PlayerId.PlayerTwo })
+                        {
+                            if (!PlayerManager.DoesPlayerExist(id)) continue;
+                            var stats = PlayerManager.GetPlayer(id).stats;
+                            if (stats.Health <= 0) continue;
+                            stats.SetHealth(0);
+                            HarmonyLib.AccessTools.Method(typeof(PlayerStatsManager), "OnStatsDeath").Invoke(stats, null);
+                        }
+                        break;
+                    case "menustate":
+                    case "expectdeathmenu":
+                    case "expectequip":
+                    {
+                        var gui = LevelGameOverGUI.Current;
+                        string value = gui != null ? HarmonyLib.AccessTools.Field(typeof(LevelGameOverGUI), "state").GetValue(gui).ToString() : "none";
+                        var equip = gui != null ? (LevelEquipUI)HarmonyLib.AccessTools.Field(typeof(LevelGameOverGUI), "equipUI").GetValue(gui) : null;
+                        bool equipVisible = equip != null && equip.gameObject.activeInHierarchy && equip.CurrentState == AbstractEquipUI.ActiveState.Active;
+                        bool ready = gui != null && gui.gameObject.activeInHierarchy && value == "Ready" && !equipVisible;
+                        bool expected = a[0] == "expectequip" ? equipVisible : ready;
+                        Log((a[0] != "menustate" ? (expected ? "PASS " : "FAIL ") : "") + "death menu=" + value + " active=" + (gui != null && gui.gameObject.activeInHierarchy) + " equip=" + equipVisible + " serial=" + HostSync.CurrentSerial);
+                        break;
+                    }
+                    case "captionfault":
+                        CaptionFailureUntil = Time.realtimeSinceStartup + F(a, 1, 3f);
+                        Log("Injecting caption metadata failure for input isolation check");
                         break;
                     case "equip":
                         keepRunning = false;
@@ -406,6 +445,14 @@ namespace CupheadOnline.Sync
                     case "state":
                         Log(State());
                         break;
+                    case "expectinput":
+                    {
+                        uint dash = (uint)F(a, 1, 0f), weapon = (uint)F(a, 2, 0f);
+                        bool correct = RemoteInput.Remote.Latest.Presses[7] == (byte)dash && RemoteInput.Remote.Latest.Presses[5] == (byte)weapon &&
+                            RemoteInput.Remote.FixedDownCount(7) == dash && RemoteInput.Remote.FixedDownCount(5) == weapon;
+                        Log((correct ? "PASS " : "FAIL ") + RemoteInput.Summary(true));
+                        break;
+                    }
                     case "musicstate":
                         Log(MusicSync.Summary());
                         break;
@@ -506,7 +553,7 @@ namespace CupheadOnline.Sync
         {
             string s = "scene=" + SceneManager.GetActiveScene().name + " loading=" + SceneLoader.CurrentlyLoading + " paused=" + PauseManager.state +
                 " menu=" + CupheadOnline.UI.Overlay.Visible + " cursor=" + Cursor.visible + "/" + Cursor.lockState;
-            if (Session.Role == Role.Client) return s + " " + ClientMirror.Summary();
+            if (Session.Role == Role.Client) return s + " " + RemoteInput.Summary(false) + " " + ClientMirror.Summary();
             s += " multiplayer=" + PlayerManager.Multiplayer;
             s += " " + RemoteInput.Summary(true);
             for (int i = 0; i < 2; i++)

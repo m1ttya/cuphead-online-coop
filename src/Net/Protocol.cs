@@ -35,7 +35,7 @@ namespace CupheadOnline.Net
     {
         public const byte Magic0 = 0xC0;
         public const byte Magic1 = 0x9E;
-        public const byte Version = 7;
+        public const byte Version = 8;
         public const int HeaderSize = 9; // magic(2) version(1) ack(2) sack(4)
         public const int DefaultPort = 27960;
 

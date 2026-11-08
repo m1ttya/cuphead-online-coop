@@ -14,6 +14,7 @@
     <Compile Include="../../src/Sync/UiTextLines.cs" Link="UiTextLines.cs" />
     <Compile Include="../../src/Sync/AssetNames.cs" Link="AssetNames.cs" />
     <Compile Include="../../src/Sync/InputLabels.cs" Link="InputLabels.cs" />
+    <Compile Include="../../src/Sync/ButtonCaption.cs" Link="ButtonCaption.cs" />
     <Compile Include="../../src/Net/Protocol.cs" Link="Protocol.cs" />
     <Compile Include="../../src/Net/Connection.cs" Link="Connection.cs" />
   </ItemGroup>

@@ -211,7 +211,6 @@ namespace CupheadOnline.Net
             Connection.Receive();
             if (!IsClient || Connection == null) return;
             RemoteInput.SampleAndSend(Connection);
-            GlyphSync.TickClient(Connection);
             Connection.Flush();
         }
 
@@ -229,6 +228,14 @@ namespace CupheadOnline.Net
             {
                 LogThrottled("Sync tick failed: " + ex);
             }
+            // Captions are optional UI metadata. Keep their polling, font loading and refreshes out of the
+            // 0.1.6 input/flush path; a failure here must not delay or cancel controller traffic.
+            try
+            {
+                if (IsClient) GlyphSync.TickClient(Connection);
+                if (IsHost) GlyphSync.TickHost();
+            }
+            catch (Exception ex) { LogThrottled("Button caption sync failed: " + ex); }
             Connection.Flush();
         }
 
