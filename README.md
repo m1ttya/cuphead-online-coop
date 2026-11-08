@@ -90,10 +90,7 @@ Then start Cuphead from Steam as usual. On Windows the mod loads automatically; 
 Cuphead isn't found, first run `$env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\common\Cuphead'` with your own folder.
 
 > [!NOTE]
-> This fork has been checked in two running Windows game instances, including UI rendering, scripted network
-> input and music recovery. The players also tested the client's physical gamepad and confirmed that music
-> and sound effects are audible. They report that everything is currently working as expected, with no bugs
-> encountered in their play session so far. This version has not been tested on macOS.
+> Windows: gamepad and audio tested; no bugs encountered so far. macOS has not been tested.
 > See the [validation reports](docs/client-fixes-0.1.7-ru.md) and
 > [report problems here](https://github.com/m1ttya/cuphead-online-coop/issues).
 
