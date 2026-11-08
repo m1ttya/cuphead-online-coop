@@ -73,11 +73,15 @@ namespace CupheadOnline.Sync
             foreach (Tracked<UiState> t in graphics.Values) t.Visible = false;
             cameraIds.Clear();
             MaterialSync.ResendValues();
+            // Replay queued events before restoring the current state, so old Play/Stop calls cannot undo it.
+            AudioSync.FlushBatch(Session.Connection);
+            MusicSync.SceneReady(serial);
         }
 
         public static void OnClientJoined(Connection connection)
         {
             active = true;
+            MusicSync.ResetHost();
             RemoteInput.ResetHost();
             RemoteInput.DriveHostPlayerTwo = true;
             Sprites.ResetSent();
@@ -94,6 +98,7 @@ namespace CupheadOnline.Sync
         {
             if (!active) return;
             active = false;
+            MusicSync.ResetHost();
             RemoteInput.DriveHostPlayerTwo = false;
             RemoteInput.ResetHost();
             try
@@ -116,6 +121,7 @@ namespace CupheadOnline.Sync
                 SendScene(connection, activeScene.name);
             }
             AudioSync.FlushBatch(connection);
+            MusicSync.TickHost(connection, sceneSerial);
             frame++;
             if (SendInterval > 1 && frame % SendInterval != 0) return;
             if (activeScene.name != sceneName) return; // mid-load
@@ -359,15 +365,18 @@ namespace CupheadOnline.Sync
             for (int ci = 0; ci < canvases.Length; ci++)
             {
                 Canvas canvas = canvases[ci];
-                if (!canvas.isRootCanvas || !canvas.enabled || canvas.gameObject.scene != scene) continue;
+                // ControlMapper lives under Cuphead's persistent root, outside the active scene.
+                if (!canvas.isRootCanvas || !canvas.enabled || !CapturedScene(canvas.gameObject.scene, scene)) continue;
                 Camera cam = null;
                 if (canvas.renderMode != RenderMode.ScreenSpaceOverlay)
                 {
-                    // ScreenSpaceCamera: worldCamera renders it. WorldSpace: worldCamera is only the UI event camera,
-                    // the canvas is drawn by whichever camera renders its layer (e.g. UICamera for DialogueCanvas).
-                    cam = canvas.renderMode == RenderMode.ScreenSpaceCamera && canvas.worldCamera != null
-                        ? canvas.worldCamera
-                        : SceneCamera(scene, canvas.gameObject.layer, canvas.transform.position);
+                    // Cuphead explicitly assigns the map/level camera to its WorldSpace dialogue canvas.
+                    // Choosing by the root's position can instead pick UICamera: its huge orthographic frustum
+                    // contains the map in world units, reducing a whole speech bubble to only a few pixels.
+                    cam = canvas.worldCamera;
+                    if (cam == null || !cam.isActiveAndEnabled || cam.targetTexture != null ||
+                        (cam.cullingMask & (1 << canvas.gameObject.layer)) == 0)
+                        cam = SceneCamera(scene, canvas.gameObject.layer, canvas.transform.position);
                     if (cam == null) continue;
                 }
                 graphicBuffer.Clear();
@@ -403,7 +412,16 @@ namespace CupheadOnline.Sync
                     if (chunk.Length > max)
                     {
                         int len = chunk.Length - before;
-                        if (len + 6 > max) { chunk.Length = before; continue; } // pathological text, skip
+                        if (len + 6 > max)
+                        {
+                            // NPC strings expand spaces into rich-text tags. They routinely exceed one MTU;
+                            // skipping the entry permanently removes the entire speech bubble's text.
+                            chunk.Length = before;
+                            if (len <= UiFragments.MaxEntry)
+                                UiFragments.Send(connection, sceneSerial, frame, t.Id, chunk.Buffer, before, len);
+                            else Plugin.Log.LogWarning("UI text entry too large: " + len + " bytes");
+                            continue;
+                        }
                         byte[] tail = new byte[len];
                         Buffer.BlockCopy(chunk.Buffer, before, tail, 0, len);
                         chunk.Length = before;
@@ -451,7 +469,7 @@ namespace CupheadOnline.Sync
             for (int i = 0; i < cams.Length; i++)
             {
                 Camera c = cams[i];
-                if (c.gameObject.scene != scene || c.targetTexture != null) continue;
+                if (!CapturedScene(c.gameObject.scene, scene) || c.targetTexture != null) continue;
                 if ((c.cullingMask & (1 << layer)) == 0) continue;
                 if (fallback == null || c.GetComponent<AbstractCupheadCamera>() != null) fallback = c;
                 Vector3 v = c.WorldToViewportPoint(worldPos);
@@ -459,6 +477,11 @@ namespace CupheadOnline.Sync
                 if (inside && (best == null || c.depth > best.depth)) best = c;
             }
             return best ?? fallback;
+        }
+
+        private static bool CapturedScene(Scene candidate, Scene activeScene)
+        {
+            return candidate == activeScene || candidate.name == "DontDestroyOnLoad";
         }
 
         private static readonly List<CanvasGroup> groupBuffer = new List<CanvasGroup>();
@@ -503,15 +526,18 @@ namespace CupheadOnline.Sync
             {
                 if (string.IsNullOrEmpty(text.text)) return false;
                 st.Kind = UiState.KindText;
-                st.Text = text.text;
+                st.TextLayout.ExplicitLines = !text.supportRichText || text.text.IndexOf('<') < 0;
+                st.Text = st.TextLayout.ExplicitLines ? UnityTextWithLineBreaks(text) : text.text;
                 st.Font = Fonts.IdOf(text.font);
-                int size = text.resizeTextForBestFit ? text.cachedTextGenerator.fontSizeUsedForBestFit : text.fontSize;
-                if (size <= 0) size = text.fontSize;
+                float size = UiTextLayout.FontUnits(text.fontSize, text.cachedTextGenerator.fontSizeUsedForBestFit, text.pixelsPerUnit, text.resizeTextForBestFit);
                 st.FontSize = size; // converted to screen space below
                 st.Alignment = (byte)text.alignment;
                 st.FontStyle = (byte)text.fontStyle;
                 st.LineSpacing = text.lineSpacing;
                 st.RichText = text.supportRichText;
+                st.TextLayout.HorizontalOverflow = (byte)text.horizontalOverflow;
+                st.TextLayout.VerticalOverflow = (byte)text.verticalOverflow;
+                st.TextLayout.AlignByGeometry = text.alignByGeometry;
             }
             else if (tmp != null)
             {
@@ -524,6 +550,22 @@ namespace CupheadOnline.Sync
                 st.FontStyle = (byte)tmp.fontStyle;
                 st.LineSpacing = tmp.lineSpacing;
                 st.RichText = tmp.richText;
+                st.TextLayout.CharacterSpacing = tmp.characterSpacing;
+                st.TextLayout.ParagraphSpacing = tmp.paragraphSpacing;
+                st.TextLayout.WidthAdjustment = tmp.characterWidthAdjustment;
+                st.TextLayout.Kerning = tmp.enableKerning;
+                st.TextLayout.ParseControls = tmp.parseCtrlCharacters;
+                st.TextLayout.OverflowMode = (byte)tmp.OverflowMode;
+                st.TextLayout.VisibleCharacters = tmp.maxVisibleCharacters;
+                st.TextLayout.VisibleWords = tmp.maxVisibleWords;
+                st.TextLayout.VisibleLines = tmp.maxVisibleLines;
+                st.TextLayout.Page = tmp.pageToDisplay;
+                Rect rect = tmp.rectTransform.rect;
+                Vector4 margin = tmp.margin;
+                st.TextLayout.Left = rect.width > 0.0001f ? margin.x / rect.width : 0f;
+                st.TextLayout.Top = rect.height > 0.0001f ? margin.y / rect.height : 0f;
+                st.TextLayout.Right = rect.width > 0.0001f ? margin.z / rect.width : 0f;
+                st.TextLayout.Bottom = rect.height > 0.0001f ? margin.w / rect.height : 0f;
             }
             else if (raw != null)
             {
@@ -594,6 +636,7 @@ namespace CupheadOnline.Sync
                 float localHeight = g.rectTransform.rect.height;
                 float pixelsPerUnit = localHeight > 0.001f ? h / localHeight : canvas.scaleFactor;
                 st.FontSize = st.FontSize * pixelsPerUnit / Mathf.Max(1f, box.height);
+                st.TextLayout.Aspect = UiTextLayout.RectAspect(g.rectTransform.rect.width, localHeight, w, h);
             }
             st.CanvasOrder = (short)canvas.sortingOrder;
             st.Depth = g.depth;
@@ -659,6 +702,28 @@ namespace CupheadOnline.Sync
         private static readonly Dictionary<int, TmpBreaks> tmpBreaks = new Dictionary<int, TmpBreaks>();
         private static readonly List<int> breakAt = new List<int>();
         private static int[] bufferToText = new int[256];
+
+        private static string UnityTextWithLineBreaks(Text text)
+        {
+            string source = text.text;
+            if (text.horizontalOverflow != HorizontalWrapMode.Wrap) return source;
+            var lines = text.cachedTextGenerator.lines;
+            if (lines.Count < 2) return source;
+            breakAt.Clear();
+            int signature = lines.Count;
+            for (int i = 1; i < lines.Count; i++)
+            {
+                breakAt.Add(lines[i].startCharIdx);
+                signature = signature * 31 + lines[i].startCharIdx;
+            }
+            TmpBreaks cached;
+            int key = text.GetInstanceID();
+            if (tmpBreaks.TryGetValue(key, out cached) && ReferenceEquals(cached.Source, source) && cached.Signature == signature) return cached.Result;
+            if (cached == null) tmpBreaks[key] = cached = new TmpBreaks();
+            cached.Source = source; cached.Signature = signature;
+            cached.Result = UiTextLines.Insert(source, breakAt);
+            return cached.Result;
+        }
 
         /// <summary>
         /// The text with a newline wherever the host's TMP wrapped it. The client draws with wrapping off, so its lines

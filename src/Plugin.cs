@@ -12,10 +12,11 @@ using UnityEngine;
 namespace CupheadOnline
 {
     [BepInPlugin(Guid, DisplayName, Version)]
+    [DefaultExecutionOrder(-10000)]
     public sealed class Plugin : BaseUnityPlugin
     {
         public const string Guid = "dev.cupheadonline.mod";
-        public const string Version = "0.1.3";
+        public const string Version = "0.1.7";
         /// <summary>Unofficial mod: the name must not suggest it is made or endorsed by Studio MDHR.</summary>
         public const string DisplayName = "Online Co-op for Cuphead (unofficial)";
 
@@ -71,6 +72,7 @@ namespace CupheadOnline
             }
             harmony = new Harmony(Guid);
             PatchAll();
+            RemoteInput.Install();
             AudioSync.Install(harmony);
             HostSync.Install();
             ClientMirror.Install();
@@ -125,6 +127,7 @@ namespace CupheadOnline
             try
             {
                 Session.PreUpdate();
+                GlyphSync.TickHost();
             }
             catch (Exception ex)
             {
@@ -208,7 +211,17 @@ namespace CupheadOnline
 
         private void LateUpdate()
         {
+            try { Session.BeforeRender(); }
+            catch (Exception ex) { Log.LogError("Late network update failed: " + ex); }
             Overlay.UpdateCursor();
+        }
+
+        private void FixedUpdate()
+        {
+            // Update runs after physics. Read newly arrived input before the game polls dash/weapon-switch.
+            if (!Session.IsHost) return;
+            try { Session.PreUpdate(); }
+            catch (Exception ex) { Log.LogError("Fixed network update failed: " + ex); }
         }
 
         private void OnGUI()

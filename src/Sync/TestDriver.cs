@@ -23,7 +23,11 @@ namespace CupheadOnline.Sync
     ///   level NAME [MODE]            host: load a boss level directly (Levels enum, e.g. Veggies; mode Easy/Normal/Hard)
     ///   hudweapon NAME               host: show the HUD weapon-switch icon (slides inside a UGUI Mask) for Weapon NAME
     ///   secondary NAME               host: give both players Weapon NAME as secondary weapon (in memory, not saved)
-    ///   invincible                   host: both players stop taking damage (the game's debug toggle; reset per level)
+    ///   invincible                   host: keep the game's debug invincibility enabled, including new player spawns
+    ///   keeprunning                  host: dismiss test-window/controller pauses during a scripted regression
+    ///   scene NAME                   host: load a scene directly (only use with an initialized game)
+    ///   dialog TEXT                  host: show literal regression text using the map's speech bubble
+    ///   gameover                     host: display the current boss's game-over card without killing players
     ///   shot NAME                    save a screenshot to CUPHEAD_ONLINE_SHOTS/ROLE_NAME.png
     ///   burst NAME COUNT FPS         COUNT screenshots at FPS, starting on the next 10 s wall-clock boundary
     ///   align [PERIOD]               wait for the next PERIOD-second wall-clock mark (default 30) to sync two instances
@@ -44,11 +48,14 @@ namespace CupheadOnline.Sync
     {
         public static VirtualPad HostPad;
         public static int KeyboardPulse;
+        public static readonly bool ReadOnlySaves = Environment.GetEnvironmentVariable("CUPHEAD_ONLINE_TEST_READONLY") == "1";
+        private static bool keepInvincible, keepRunning;
 
         private static PadState pad;
         private static string role = "offline";
 
         private static MonoBehaviour runnerBehaviour;
+        private static string signalDirectory;
 
         public static void Start(MonoBehaviour runner)
         {
@@ -60,12 +67,15 @@ namespace CupheadOnline.Sync
                 Plugin.Log.LogError("[test] script not found: " + path);
                 return;
             }
+            signalDirectory = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(path))), "signals");
             runner.StartCoroutine(Run(File.ReadAllLines(path)));
         }
 
         public static void Update()
         {
             if (KeyboardPulse > 0) KeyboardPulse--;
+            if (keepInvincible && !PlayerStatsManager.DebugInvincible) PlayerStatsManager.DebugToggleInvincible();
+            if (keepRunning && PauseManager.state == PauseManager.State.Paused) PauseManager.Unpause();
         }
 
         private static void Log(string text)
@@ -98,6 +108,18 @@ namespace CupheadOnline.Sync
                 Log("> " + line);
                 switch (a[0])
                 {
+                    case "signal":
+                        Directory.CreateDirectory(signalDirectory);
+                        File.WriteAllText(Path.Combine(signalDirectory, Path.GetFileName(a[1])), "ready");
+                        break;
+                    case "waitsignal":
+                    {
+                        float until = Time.realtimeSinceStartup + F(a, 2, 60f);
+                        string marker = Path.Combine(signalDirectory, Path.GetFileName(a[1]));
+                        while (!File.Exists(marker) && Time.realtimeSinceStartup < until) yield return new WaitForSecondsRealtime(0.1f);
+                        Log(File.Exists(marker) ? "PASS signal " + a[1] : "FAIL signal " + a[1]);
+                        break;
+                    }
                     case "wait":
                         yield return new WaitForSecondsRealtime(F(a, 1, 1f));
                         break;
@@ -179,6 +201,23 @@ namespace CupheadOnline.Sync
                         catch (Exception ex) { Log("FAIL level " + a[1] + ": " + ex.Message); }
                         break;
                     }
+                    case "scene":
+                        SceneLoader.LoadScene(a[1], SceneLoader.Transition.Fade, SceneLoader.Transition.Fade, SceneLoader.Icon.None);
+                        break;
+                    case "dialog":
+                        try
+                        {
+                            SpeechBubble bubble = SpeechBubble.Instance;
+                            if (bubble == null) { Log("FAIL no SpeechBubble in this scene"); break; }
+                            CupheadMapCamera mapCamera = CupheadMapCamera.Current;
+                            if (mapCamera != null) bubble.basePosition = mapCamera.GetComponent<Camera>().ViewportToWorldPoint(new Vector3(0.75f, 0.15f, 1f));
+                            string normalized = (string)HarmonyLib.AccessTools.Method(typeof(SpeechBubble), "GetNormalizedText")
+                                .Invoke(bubble, new object[] { line.Substring(a[0].Length).Trim() });
+                            bubble.StartCoroutine((IEnumerator)HarmonyLib.AccessTools.Method(typeof(SpeechBubble), "show_cr")
+                                .Invoke(bubble, new object[] { SpeechBubble.Mode.Text, normalized, null }));
+                        }
+                        catch (Exception ex) { Log("FAIL dialog: " + (ex.InnerException ?? ex).Message); }
+                        break;
                     case "hudweapon":
                         try
                         {
@@ -198,7 +237,90 @@ namespace CupheadOnline.Sync
                         catch (Exception ex) { Log("FAIL secondary " + a[1] + ": " + ex.Message); }
                         break;
                     case "invincible":
+                        keepInvincible = true; // new player Awake resets the game's debug flag
                         if (!PlayerStatsManager.DebugInvincible) PlayerStatsManager.DebugToggleInvincible();
+                        break;
+                    case "keeprunning":
+                        keepRunning = true;
+                        break;
+                    case "gameover":
+                        if (LevelGameOverGUI.Current != null) LevelGameOverGUI.Current.In(false);
+                        else Log("FAIL no game over UI");
+                        break;
+                    case "equip":
+                        keepRunning = false;
+                        PauseManager.Unpause();
+                        if (AbstractEquipUI.Current != null) AbstractEquipUI.Current.StartCoroutine(AbstractEquipUI.Current.ShowPauseMenu());
+                        else Log("FAIL no equip UI");
+                        break;
+                    case "controls":
+                    {
+                        if (AbstractEquipUI.Current != null) AbstractEquipUI.Current.gameObject.SetActive(false);
+                        PauseManager.Unpause();
+                        var mapper = Cuphead.Current.controlMapper;
+                        Canvas canvas = mapper.GetComponentInChildren<Canvas>(true);
+                        CupheadUICamera camera = UnityEngine.Object.FindObjectOfType<CupheadUICamera>();
+                        if (canvas != null && camera != null) canvas.worldCamera = camera.GetComponent<Camera>();
+                        mapper.showPlayers = true;
+                        mapper.Reset(); mapper.Open();
+                        break;
+                    }
+                    case "controlsclose":
+                        Cuphead.Current.controlMapper.Close(false);
+                        break;
+                    case "glyphletter":
+                        foreach (MapUIInteractionDialogue dialogue in UnityEngine.Object.FindObjectsOfType<MapUIInteractionDialogue>())
+                            foreach (CupheadGlyph glyph in dialogue.GetComponentsInChildren<CupheadGlyph>(true))
+                                ((UnityEngine.UI.Text)HarmonyLib.AccessTools.Field(typeof(CupheadGlyph), "glyphChar").GetValue(glyph)).text = a[1];
+                        break;
+                    case "glyph":
+                        MapUIInteractionDialogue.Create(new AbstractUIInteractionDialogue.Properties(""),
+                            Map.Current.players[(int)F(a, 1, 0f)].input, new Vector2(F(a, 2, 0f), F(a, 3, 0.7f)));
+                        break;
+                    case "bind":
+                    {
+                        CupheadButton action = (CupheadButton)Enum.Parse(typeof(CupheadButton), a[1], true);
+                        KeyCode key = (KeyCode)Enum.Parse(typeof(KeyCode), a[2], true);
+                        var maps = Rewired.ReInput.players.GetPlayer(0).controllers.maps;
+                        var binding = maps.GetFirstElementMapWithAction(Rewired.ControllerType.Keyboard, (int)action, true);
+                        bool changed = binding != null && binding.controllerMap.ReplaceElementMap(binding.id, (int)action, Rewired.Pole.Positive, key, Rewired.ModifierKeyFlags.None);
+                        PlayerManager.ControlsChanged();
+                        Log((changed ? "PASS" : "FAIL") + " local binding " + action + "=" + CupheadInput.InputDisplayForButton(action, 0).text);
+                        break;
+                    }
+                    case "glyphassert":
+                    {
+                        int player = (int)F(a, 1, 1f), found = 0;
+                        string expected = a[2];
+                        foreach (MapUIInteractionDialogue dialogue in UnityEngine.Object.FindObjectsOfType<MapUIInteractionDialogue>())
+                            foreach (CupheadGlyph glyph in dialogue.GetComponentsInChildren<CupheadGlyph>(true))
+                            {
+                                if (glyph.rewiredPlayerId != player) continue;
+                                found++;
+                                var field = HarmonyLib.AccessTools.Field(typeof(CupheadGlyph), expected.Length > 1 ? "glyphText" : "glyphChar");
+                                var text = (UnityEngine.UI.Text)field.GetValue(glyph);
+                                Log((text.gameObject.activeInHierarchy && text.text == expected ? "PASS" : "FAIL") + " glyph player=" + player + " expected=" + expected + " actual=" + text.text + " active=" + text.gameObject.activeInHierarchy);
+                            }
+                        if (found == 0) Log("FAIL no glyph for player " + player);
+                        break;
+                    }
+                    case "glyphdump":
+                        foreach (MapUIInteractionDialogue dialogue in UnityEngine.Object.FindObjectsOfType<MapUIInteractionDialogue>())
+                            foreach (CupheadGlyph glyph in dialogue.GetComponentsInChildren<CupheadGlyph>(true))
+                            {
+                                string label = CupheadInput.InputDisplayForButton(glyph.button, glyph.rewiredPlayerId).text;
+                                Log("glyph player=" + glyph.rewiredPlayerId + " action=" + glyph.button + " display='" + label + "'");
+                                foreach (UnityEngine.UI.Text text in glyph.GetComponentsInChildren<UnityEngine.UI.Text>(true))
+                                    Log("glyph text=" + text.name + " active=" + text.gameObject.activeInHierarchy + " value='" + text.text + "'");
+                            }
+                        break;
+                    case "inventory":
+                        foreach (Weapon weapon in Enum.GetValues(typeof(Weapon)))
+                        {
+                            if (!weapon.ToString().StartsWith("level_weapon_", StringComparison.Ordinal)) continue;
+                            foreach (PlayerId id in new[] { PlayerId.PlayerOne, PlayerId.PlayerTwo })
+                                if (!PlayerData.Data.IsUnlocked(id, weapon)) PlayerData.Data.Gift(id, weapon);
+                        }
                         break;
                     case "shot":
                         Shot(a.Length > 1 ? a[1] : "shot");
@@ -284,6 +406,25 @@ namespace CupheadOnline.Sync
                     case "state":
                         Log(State());
                         break;
+                    case "musicstate":
+                        Log(MusicSync.Summary());
+                        break;
+                    case "silencemusic":
+                        MusicSync.StopLocalSourcesForTest();
+                        Log("Stopped local music sources for recovery regression");
+                        break;
+                    case "retry":
+                        SceneLoader.ReloadLevel();
+                        break;
+                    case "retrymenu":
+                        if (LevelGameOverGUI.Current != null)
+                            HarmonyLib.AccessTools.Method(typeof(LevelGameOverGUI), "Retry").Invoke(LevelGameOverGUI.Current, null);
+                        else Log("FAIL no game over UI for retry");
+                        break;
+                    case "resolution":
+                        Screen.SetResolution((int)F(a, 1, 960f), (int)F(a, 2, 540f), false);
+                        yield return new WaitForSecondsRealtime(1f);
+                        break;
                     case "dump":
                         DebugDump.Dump("script");
                         break;
@@ -367,6 +508,7 @@ namespace CupheadOnline.Sync
                 " menu=" + CupheadOnline.UI.Overlay.Visible + " cursor=" + Cursor.visible + "/" + Cursor.lockState;
             if (Session.Role == Role.Client) return s + " " + ClientMirror.Summary();
             s += " multiplayer=" + PlayerManager.Multiplayer;
+            s += " " + RemoteInput.Summary(true);
             for (int i = 0; i < 2; i++)
             {
                 PlayerId id = (PlayerId)i;
@@ -376,8 +518,11 @@ namespace CupheadOnline.Sync
                     AbstractPlayerController p = PlayerManager.GetPlayer(id);
                     Vector3 pos = p.transform.position;
                     s += string.Format(" p{0}=({1:0},{2:0}) hp={3}", i + 1, pos.x, pos.y, p.stats != null ? p.stats.Health : -1);
+                    s += " inputPlayer=" + (p.input.actions != null ? p.input.actions.id.ToString() : "null");
                     LevelPlayerWeaponManager weapons = p.GetComponent<LevelPlayerWeaponManager>();
                     if (weapons != null) s += " weapon=" + HarmonyLib.Traverse.Create(weapons).Field("currentWeapon").GetValue();
+                    LevelPlayerMotor motor = p.GetComponent<LevelPlayerMotor>();
+                    if (motor != null) s += " dash=" + motor.DashState + " fixedTime=" + Time.fixedTime;
                 }
                 catch (Exception ex) { s += " p" + (i + 1) + "=? (" + ex.GetType().Name + ")"; }
             }

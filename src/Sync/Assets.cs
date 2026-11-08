@@ -15,7 +15,7 @@ namespace CupheadOnline.Sync
         {
             Rect r = s.rect;
             Vector2 p = s.pivot;
-            return s.name + "|" + Mathf.RoundToInt(r.width) + "x" + Mathf.RoundToInt(r.height) + "|" + Mathf.RoundToInt(p.x) + "," + Mathf.RoundToInt(p.y);
+            return AssetNames.Sprite(s.name) + "|" + Mathf.RoundToInt(r.width) + "x" + Mathf.RoundToInt(r.height) + "|" + Mathf.RoundToInt(p.x) + "," + Mathf.RoundToInt(p.y);
         }
 
         /// <summary>Host key: identity plus "#AtlasTag" when the sprite lives in a late-bound SpriteAtlas.</summary>

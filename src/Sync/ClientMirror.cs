@@ -49,7 +49,7 @@ namespace CupheadOnline.Sync
             int hash = key.IndexOf('#');
             if (hash < 0) return null;
             string tag = key.Substring(hash + 1);
-            string name = key.Substring(0, key.IndexOf('|'));
+            string name = AssetNames.Sprite(key.Substring(0, key.IndexOf('|')));
             UnityEngine.U2D.SpriteAtlas atlas;
             if (!atlases.TryGetValue(tag, out atlas) || atlas == null)
             {
@@ -80,7 +80,8 @@ namespace CupheadOnline.Sync
         }
         public static readonly ClientAssetTable<Material> Materials = new ClientAssetTable<Material>(AssetKeys.Material, FallbackMaterial);
         public static readonly ClientAssetTable<Font> Fonts = new ClientAssetTable<Font>(f => AssetKeys.Font(f));
-        public static readonly ClientAssetTable<TMPro.TMP_FontAsset> TmpFonts = new ClientAssetTable<TMPro.TMP_FontAsset>(f => AssetKeys.Font(f));
+        public static readonly ClientAssetTable<TMPro.TMP_FontAsset> TmpFonts = new ClientAssetTable<TMPro.TMP_FontAsset>(f => AssetKeys.Font(f))
+            { Usable = f => f.atlas != null && f.material != null };
 
         private sealed class MirrorSprite
         {
@@ -96,6 +97,7 @@ namespace CupheadOnline.Sync
 
         private sealed class MirrorGraphic
         {
+            public readonly SnapshotFields Fields = new SnapshotFields();
             public GameObject Go;
             public RectTransform Rt;
             public Graphic G;
@@ -105,6 +107,7 @@ namespace CupheadOnline.Sync
             public uint DespawnFrame;
             public bool Shown;
             public bool ClipApplied;
+            public bool FontPending, MaterialPending;
         }
 
         private sealed class MirrorCamera
@@ -116,6 +119,7 @@ namespace CupheadOnline.Sync
 
         private static readonly Dictionary<ushort, MirrorSprite> sprites = new Dictionary<ushort, MirrorSprite>();
         private static readonly Dictionary<ushort, MirrorGraphic> graphics = new Dictionary<ushort, MirrorGraphic>();
+        private static readonly UiFragments uiFragments = new UiFragments();
         private static readonly Dictionary<byte, MirrorCamera> cameras = new Dictionary<byte, MirrorCamera>();
         private static readonly Dictionary<short, Canvas> canvases = new Dictionary<short, Canvas>();
         private static readonly HashSet<short> dirtyCanvases = new HashSet<short>();
@@ -130,6 +134,7 @@ namespace CupheadOnline.Sync
 
         public static void OnConnected()
         {
+            RemoteInput.ResetClient();
             Mirroring = true;
             RemoteInput.BlockLocalGame = true;
             LoadedSerial = 0;
@@ -149,6 +154,7 @@ namespace CupheadOnline.Sync
         /// </summary>
         public static void OnReconnected()
         {
+            RemoteInput.ResetClient();
             ClearMirror();
             Sprites.ClearAll();
             Materials.ClearAll();
@@ -215,6 +221,7 @@ namespace CupheadOnline.Sync
             if (uiCamera != null) uiCamera.rect = new Rect(0f, 0f, 1f, 1f);
             sprites.Clear();
             graphics.Clear();
+            uiFragments.Clear();
             cameras.Clear();
             canvases.Clear();
             dirtyCanvases.Clear();
@@ -224,9 +231,8 @@ namespace CupheadOnline.Sync
 
         public static void Tick(Connection connection)
         {
-            RemoteInput.SampleAndSend(connection);
-
             if (loadPending && !SceneLoader.CurrentlyLoading) StartLoad();
+            MusicSync.Update();
 
             if (Sprites.Version != spriteVersionSeen || Materials.Version != uiVersionSeen)
             {
@@ -239,7 +245,7 @@ namespace CupheadOnline.Sync
                 foreach (MirrorGraphic g in graphics.Values)
                 {
                     Image img = g.G as Image;
-                    if (img != null && img.sprite == null && g.St.Sprite != 0) img.sprite = Sprites.Get(g.St.Sprite);
+                    if (img != null && g.St.Sprite != 0 && Sprites.NeedsRetry(img.sprite)) ApplyGraphicAsset(g);
                 }
             }
 
@@ -253,7 +259,11 @@ namespace CupheadOnline.Sync
                 foreach (MirrorGraphic g in graphics.Values)
                 {
                     Image img = g.G as Image;
-                    if (g.Shown && img != null && g.St.Sprite != 0 && Sprites.NeedsRetry(img.sprite)) img.sprite = Sprites.Get(g.St.Sprite);
+                    if (g.Shown && img != null && g.St.Sprite != 0 && Sprites.NeedsRetry(img.sprite)) ApplyGraphicAsset(g);
+                    // Definitions and assets can arrive after an unreliable UI snapshot.
+                    if (g.Shown && (g.FontPending || g.MaterialPending) &&
+                        (g.St.Kind == UiState.KindText || g.St.Kind == UiState.KindTmp))
+                        ApplyGraphic(g, UiState.TextBit | UiState.Mat, g.St.CanvasOrder, g.St.Depth);
                 }
             }
 
@@ -376,8 +386,10 @@ namespace CupheadOnline.Sync
                 case MsgType.CameraDef: OnCameraDef(r); break;
                 case MsgType.Camera: OnCamera(r); break;
                 case MsgType.UiSnapshot: OnUiSnapshot(r); break;
+                case MsgType.UiFragment: OnUiFragment(r); break;
                 case MsgType.UiDespawn: OnUiDespawn(r); break;
                 case MsgType.Audio: AudioSync.OnAudioMessage(r, r.Remaining); break;
+                case MsgType.MusicState: MusicSync.Read(r); break;
                 case MsgType.MaterialLayout: MaterialSync.OnLayout(r); break;
                 case MsgType.MaterialProps: MaterialSync.OnProps(r); break;
             }
@@ -495,6 +507,8 @@ namespace CupheadOnline.Sync
                     if (IsImageEffect(t)) continue;
                     try { ((MonoBehaviour)mb).StopAllCoroutines(); } catch { }
                     mb.enabled = false;
+                    AbstractPausableComponent pausable = mb as AbstractPausableComponent;
+                    if (pausable != null) pausable.preEnabled = false; // replicated Unpause must not restart the frozen game
                     behaviours++;
                 }
                 foreach (Renderer r in go.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
@@ -765,6 +779,10 @@ namespace CupheadOnline.Sync
             go.layer = UiLayer;
             go.transform.SetParent(uiRoot.transform, false);
             c = go.AddComponent<Canvas>();
+            // Cuphead's old TMP does not enable this on a newly created canvas. Its SDF shaders read UV1
+            // for glyph scale/weight; dropping that stream corrupts or hides text regardless of font atlas.
+            c.additionalShaderChannels = AdditionalCanvasShaderChannels.TexCoord1 |
+                AdditionalCanvasShaderChannels.Normal | AdditionalCanvasShaderChannels.Tangent;
             c.renderMode = RenderMode.ScreenSpaceCamera;
             c.worldCamera = UiCamera();
             c.planeDistance = 10f;
@@ -788,7 +806,7 @@ namespace CupheadOnline.Sync
                     g = new MirrorGraphic();
                     graphics[id] = g;
                 }
-                if (g == null || frame < g.LastFrame || frame <= g.DespawnFrame)
+                if (g == null || frame <= g.DespawnFrame)
                 {
                     UiState junk = uiScratch;
                     junk.Read(r, mask);
@@ -796,10 +814,27 @@ namespace CupheadOnline.Sync
                 }
                 short oldOrder = g.St.CanvasOrder;
                 int oldDepth = g.St.Depth;
-                g.St.Read(r, mask);
-                g.LastFrame = frame;
+                UiState incoming = new UiState();
+                incoming.Read(r, mask);
+                mask = g.Fields.Accept(frame, mask);
+                if (mask == 0) continue;
+                g.St.Merge(ref incoming, mask);
+                if ((int)(frame - g.LastFrame) > 0) g.LastFrame = frame;
                 ApplyGraphic(g, mask, oldOrder, oldDepth);
             }
+        }
+
+        private static void OnUiFragment(NetReader r)
+        {
+            ushort serial = r.U16();
+            uint frame = r.U32();
+            ushort id = r.U16();
+            if (!Live(serial)) return;
+            byte[] entry = uiFragments.Read(frame, id, r);
+            if (entry == null) return;
+            NetWriter snapshot = new NetWriter(entry.Length + 6);
+            snapshot.U16(serial); snapshot.U32(frame); snapshot.Bytes(entry, 0, entry.Length);
+            OnUiSnapshot(new NetReader(snapshot.Buffer, 0, snapshot.Length));
         }
 
         private static void ApplyGraphic(MirrorGraphic g, uint mask, short oldOrder, int oldDepth)
@@ -847,9 +882,12 @@ namespace CupheadOnline.Sync
                 if (st.CanvasOrder != oldOrder) g.Rt.SetParent(CanvasFor(st.CanvasOrder).transform, false);
                 dirtyCanvases.Add(st.CanvasOrder);
             }
-            if ((mask & (UiState.ColorBit | UiState.Mat)) != 0)
+            // Assign the font first: it determines the glyph UVs and the compatible atlas.
+            if ((mask & UiState.TextBit) != 0) ApplyText(g);
+            if ((mask & (UiState.ColorBit | UiState.Mat | UiState.TextBit)) != 0)
             {
                 Material m = st.Material != 0 ? MaterialSync.Resolve(st.Material) : null;
+                g.MaterialPending = st.Material != 0 && m == null;
                 Color color = st.Color;
                 if (m != null && m.shader != null && m.shader.name.IndexOf("Overlay", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
@@ -861,13 +899,18 @@ namespace CupheadOnline.Sync
                 TMPro.TextMeshProUGUI tmp = g.G as TMPro.TextMeshProUGUI;
                 if (tmp != null)
                 {
-                    // Without the host's preset (or with an unresolved one lacking the font atlas) use the font's own.
-                    if (m == null || m.mainTexture == null) m = tmp.font != null ? tmp.font.material : null;
+                    // A material with a texture can still belong to a different font. Applying it with this
+                    // font's UVs draws unrelated glyph fragments. Never mutate a shared font/material asset.
+                    if (tmp.font == null || m == null || m.mainTexture != tmp.font.atlas)
+                        m = tmp.font != null ? tmp.font.material : null;
                     if (m != null) tmp.fontSharedMaterial = m;
                     tmp.color = color; // TMP_Text.color hides Graphic.color
                 }
                 else
                 {
+                    // Unity Text owns its dynamic font atlas; use the material associated with that font.
+                    Text text = g.G as Text;
+                    if (text != null && text.font != null) m = text.font.material;
                     g.G.material = m;
                     g.G.color = color;
                 }
@@ -875,7 +918,7 @@ namespace CupheadOnline.Sync
             Image image = g.G as Image;
             if (image != null)
             {
-                if ((mask & UiState.SpriteId) != 0) image.sprite = Sprites.Get(st.Sprite);
+                if ((mask & UiState.SpriteId) != 0) ApplyGraphicAsset(g);
                 if ((mask & UiState.Fill) != 0)
                 {
                     image.type = (Image.Type)st.ImageType;
@@ -886,10 +929,18 @@ namespace CupheadOnline.Sync
                     image.fillAmount = st.FillAmount;
                 }
             }
-            if ((mask & UiState.TextBit) != 0) ApplyText(g);
             // Place it now: snapshots can arrive after this frame's LayoutGraphics, and a new graphic would otherwise
             // draw one frame at the canvas corner (unclipped).
-            if ((mask & (UiState.RectBit | UiState.ClipBit)) != 0) LayoutGraphic(g, Letterbox.Pixels());
+            if ((mask & (UiState.RectBit | UiState.ClipBit | UiState.TextBit)) != 0) LayoutGraphic(g, Letterbox.Pixels());
+        }
+
+        private static void ApplyGraphicAsset(MirrorGraphic g)
+        {
+            Image image = g.G as Image;
+            if (image == null) return;
+            image.sprite = Sprites.Get(g.St.Sprite);
+            // A null Image sprite draws a solid white quad. Only an intentional id 0 should do that.
+            image.enabled = g.St.Sprite == 0 || !Sprites.NeedsRetry(image.sprite);
         }
 
         private static void ApplyText(MirrorGraphic g)
@@ -900,6 +951,7 @@ namespace CupheadOnline.Sync
             if (text != null)
             {
                 Font f = Fonts.Get(st.Font);
+                g.FontPending = st.Font != 0 && f == null;
                 if (f != null) text.font = f;
                 else if (text.font == null) text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
                 text.text = st.Text;
@@ -908,13 +960,21 @@ namespace CupheadOnline.Sync
                 text.fontStyle = (FontStyle)st.FontStyle;
                 text.lineSpacing = st.LineSpacing;
                 text.supportRichText = st.RichText;
+                // Native raster font metrics round differently at other resolutions. Reuse the host's breaks
+                // so a one-pixel difference cannot put the last letter of a label onto another row.
+                text.horizontalOverflow = st.TextLayout.ExplicitLines ? HorizontalWrapMode.Overflow : (HorizontalWrapMode)st.TextLayout.HorizontalOverflow;
+                text.verticalOverflow = (VerticalWrapMode)st.TextLayout.VerticalOverflow;
+                text.alignByGeometry = st.TextLayout.AlignByGeometry;
                 return;
             }
             TMPro.TextMeshProUGUI tmp = g.G as TMPro.TextMeshProUGUI;
             if (tmp != null)
             {
                 TMPro.TMP_FontAsset f = TmpFonts.Get(st.Font);
+                bool wasPending = g.FontPending;
+                g.FontPending = st.Font != 0 && TmpFonts.NeedsRetry(f);
                 if (f != null) tmp.font = f;
+                if (wasPending && !g.FontPending && f != null) tmp.UpdateFontAsset();
                 tmp.text = st.Text;
                 tmp.fontSize = st.FontSize * box.height;
                 int[] aligns = HostSync.TmpAlignments;
@@ -922,6 +982,17 @@ namespace CupheadOnline.Sync
                 tmp.fontStyle = (TMPro.FontStyles)st.FontStyle;
                 tmp.lineSpacing = st.LineSpacing;
                 tmp.richText = st.RichText;
+                tmp.enableAutoSizing = false; // the resolved font size is already captured on the host
+                tmp.characterSpacing = st.TextLayout.CharacterSpacing;
+                tmp.paragraphSpacing = st.TextLayout.ParagraphSpacing;
+                tmp.characterWidthAdjustment = st.TextLayout.WidthAdjustment;
+                tmp.enableKerning = st.TextLayout.Kerning;
+                tmp.parseCtrlCharacters = st.TextLayout.ParseControls;
+                tmp.OverflowMode = (TMPro.TextOverflowModes)st.TextLayout.OverflowMode;
+                tmp.maxVisibleCharacters = st.TextLayout.VisibleCharacters;
+                tmp.maxVisibleWords = st.TextLayout.VisibleWords;
+                tmp.maxVisibleLines = st.TextLayout.VisibleLines;
+                tmp.pageToDisplay = st.TextLayout.Page;
             }
         }
 
@@ -944,7 +1015,14 @@ namespace CupheadOnline.Sync
         {
             UiState st = g.St;
             g.Rt.anchoredPosition = new Vector2(box.x + st.CX * box.width, box.y + st.CY * box.height);
-            g.Rt.sizeDelta = new Vector2(st.W * box.width, st.H * box.height);
+            bool isText = st.Kind == UiState.KindText || st.Kind == UiState.KindTmp;
+            float aspect = isText && st.TextLayout.Aspect > 0f ? st.TextLayout.Aspect : 1f;
+            float width = st.W * box.width / aspect, height = st.H * box.height;
+            g.Rt.localScale = new Vector3(aspect, 1f, 1f);
+            g.Rt.sizeDelta = new Vector2(width, height);
+            TMPro.TextMeshProUGUI tmp = g.G as TMPro.TextMeshProUGUI;
+            if (tmp != null) tmp.margin = new Vector4(st.TextLayout.Left * width, st.TextLayout.Top * height,
+                st.TextLayout.Right * width, st.TextLayout.Bottom * height);
             g.Rt.localEulerAngles = new Vector3(0f, 0f, st.Angle);
             if (st.Clip)
             {
@@ -1001,6 +1079,14 @@ namespace CupheadOnline.Sync
     [HarmonyPatch]
     internal static class ClientGuards
     {
+        [HarmonyPatch(typeof(PlayerManager), "Update"), HarmonyPrefix]
+        private static bool UpdatePlayers()
+        {
+            // CupheadCore survives scene freezes. Its join/reconnect logic must not reassign local devices
+            // while player 0 is being sampled for the remote controller.
+            return !ClientMirror.Mirroring;
+        }
+
         [HarmonyPatch(typeof(SceneLoader), "LoadScene", new[] { typeof(Scenes), typeof(SceneLoader.Transition), typeof(SceneLoader.Transition), typeof(SceneLoader.Icon), typeof(SceneLoader.Context) }), HarmonyPrefix]
         private static bool LoadScene()
         {
@@ -1016,7 +1102,7 @@ namespace CupheadOnline.Sync
         [HarmonyPatch(typeof(PlayerData), "SaveCurrentFile"), HarmonyPrefix]
         private static bool SaveCurrentFile()
         {
-            return !ClientMirror.Mirroring;
+            return !ClientMirror.Mirroring && !TestDriver.ReadOnlySaves;
         }
     }
 }

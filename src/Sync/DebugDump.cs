@@ -50,6 +50,11 @@ namespace CupheadOnline.Sync
                         g.material != null ? g.material.name + "/" + (g.material.shader != null ? g.material.shader.name : "") : "-", g.color, c[0], c[2], g.canvasRenderer.cull,
                         tex != null ? tex.name + " " + tex.width + "x" + tex.height : "null", img != null && img.overrideSprite != null ? img.overrideSprite.packed.ToString() : "-"));
                     TMPro.TextMeshProUGUI tmp = g as TMPro.TextMeshProUGUI;
+                    UnityEngine.UI.Text plain = g as UnityEngine.UI.Text;
+                    if (plain != null) sb.AppendLine(string.Format("    TEXT size={0} bestFit={1}/{2} wrap={3}/{4} geometry={5} ppu={6} value={7}",
+                        plain.fontSize, plain.resizeTextForBestFit, plain.cachedTextGenerator.fontSizeUsedForBestFit,
+                        plain.horizontalOverflow, plain.verticalOverflow, plain.alignByGeometry, plain.pixelsPerUnit, plain.text.Replace("\n", "\\n")));
+                    if (img != null && img.overrideSprite != null) sb.AppendLine("    SPRITEKEY " + AssetKeys.SpriteWithAtlas(img.overrideSprite));
                     if (tmp != null)
                     {
                         // TMP_Text.color hides Graphic.color, and its font material is not Graphic.material.

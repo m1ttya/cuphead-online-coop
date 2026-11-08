@@ -13,6 +13,7 @@ namespace CupheadOnline.Net
         Pong = 6,         // either          (unreliable) echoed timestamp
         Input = 10,       // client -> host  (unreliable) remote controller state
         SceneReady = 11,  // client -> host  (reliable)  client finished loading scene serial N
+        InputLabel = 12,  // client -> host  (reliable)  changed native button caption/font for the remote player
         Scene = 20,       // host -> client  (reliable)  scene to mirror
         SpriteDef = 21,   // host -> client  (reliable)  sprite id -> name/texture
         MaterialDef = 22, // host -> client  (reliable)  material id -> name/shader
@@ -26,13 +27,15 @@ namespace CupheadOnline.Net
         CameraDef = 30,   // host -> client  (reliable)  camera id -> static camera settings
         MaterialLayout = 31, // host -> client (reliable) material id -> names of its shader's properties
         MaterialProps = 32,  // host -> client (unreliable) material property values chunk
+        MusicState = 33,     // host -> client (reliable) initial and periodic current BGM state
+        UiFragment = 34,     // host -> client (reliable) oversized UI state entry, split across datagrams
     }
 
     public static class Protocol
     {
         public const byte Magic0 = 0xC0;
         public const byte Magic1 = 0x9E;
-        public const byte Version = 3;
+        public const byte Version = 7;
         public const int HeaderSize = 9; // magic(2) version(1) ack(2) sack(4)
         public const int DefaultPort = 27960;
 

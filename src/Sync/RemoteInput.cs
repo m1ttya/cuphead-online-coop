@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using CupheadOnline.Net;
 using HarmonyLib;
 using UnityEngine;
@@ -54,6 +55,8 @@ namespace CupheadOnline.Sync
         public readonly PadState Latest = new PadState();
         private readonly Edges frameLoop = new Edges();
         private readonly Edges fixedLoop = new Edges();
+        private readonly byte[] observedPresses = new byte[PadState.ActionCount];
+        private readonly float[] pressReceivedAt = new float[PadState.ActionCount];
 
         private sealed class Edges
         {
@@ -65,8 +68,8 @@ namespace CupheadOnline.Sync
             public readonly bool[] Down = new bool[PadState.ActionCount];
             public readonly bool[] Up = new bool[PadState.ActionCount];
             public readonly float[] PressStart = new float[PadState.ActionCount];
+            public readonly uint[] DownCount = new uint[PadState.ActionCount];
             private double computedStep = -1;
-            private float lastAdvance = -1f;
 
             public void Reset(PadState latest)
             {
@@ -74,26 +77,28 @@ namespace CupheadOnline.Sync
                 Array.Clear(Held, 0, Held.Length);
                 Array.Clear(Down, 0, Down.Length);
                 Array.Clear(Up, 0, Up.Length);
+                Array.Clear(DownCount, 0, DownCount.Length);
                 Buffer.BlockCopy(latest.Presses, 0, SeenPresses, 0, SeenPresses.Length);
             }
 
-            public void Advance(PadState latest, double step, bool dropStale)
+            public void Advance(PadState latest, double step, bool dropStale, float[] receivedAt)
             {
                 if (step == computedStep) return;
                 computedStep = step;
-                float now = Time.unscaledTime;
-                if (dropStale && now - lastAdvance > StaleAfter) Buffer.BlockCopy(latest.Presses, 0, SeenPresses, 0, SeenPresses.Length);
-                lastAdvance = now;
+                float now = Time.realtimeSinceStartup;
                 for (int i = 0; i < PadState.ActionCount; i++)
                 {
-                    bool newPress = latest.Presses[i] != SeenPresses[i];
+                    // Age the press itself, not the time since physics last asked. The first fresh dash after
+                    // a pause/scene load must survive even if FixedUpdate has not polled us for several seconds.
+                    bool fresh = !dropStale || now - receivedAt[i] <= StaleAfter;
+                    bool newPress = latest.Presses[i] != SeenPresses[i] && fresh;
                     SeenPresses[i] = latest.Presses[i];
                     bool want = (latest.Held & (1u << i)) != 0 || newPress;
                     bool was = Held[i];
-                    Down[i] = (want && !was) || (newPress && was);
+                    Down[i] = (want && !was && fresh) || newPress;
                     Up[i] = !want && was;
                     Held[i] = want;
-                    if (Down[i]) PressStart[i] = now;
+                    if (Down[i]) { PressStart[i] = now; DownCount[i]++; }
                 }
             }
         }
@@ -104,6 +109,19 @@ namespace CupheadOnline.Sync
             Array.Clear(Latest.Axes, 0, Latest.Axes.Length);
             frameLoop.Reset(Latest);
             fixedLoop.Reset(Latest);
+            Buffer.BlockCopy(Latest.Presses, 0, observedPresses, 0, PadState.ActionCount);
+            for (int i = 0; i < pressReceivedAt.Length; i++) pressReceivedAt[i] = -100f;
+        }
+
+        /// <summary>Timestamp changed counters at packet arrival, including presses made while physics is paused.</summary>
+        public void ObservePresses()
+        {
+            for (int i = 0; i < PadState.ActionCount; i++)
+            {
+                if (observedPresses[i] == Latest.Presses[i]) continue;
+                observedPresses[i] = Latest.Presses[i];
+                pressReceivedAt[i] = Time.realtimeSinceStartup;
+            }
         }
 
         /// <summary>Accept the current counters as already seen (don't replay old presses).</summary>
@@ -116,12 +134,13 @@ namespace CupheadOnline.Sync
         /// <summary>The edge state for the loop that is asking: one step per rendered frame or per fixed step.</summary>
         private Edges Advance()
         {
+            ObservePresses(); // also supports the scripted local test pad
             if (Time.inFixedTimeStep)
             {
-                fixedLoop.Advance(Latest, Time.fixedTime, true);
+                fixedLoop.Advance(Latest, Time.fixedTime, true, pressReceivedAt);
                 return fixedLoop;
             }
-            frameLoop.Advance(Latest, Time.frameCount, false);
+            frameLoop.Advance(Latest, Time.frameCount, false, pressReceivedAt);
             return frameLoop;
         }
 
@@ -130,6 +149,7 @@ namespace CupheadOnline.Sync
         public bool Button(int id) { Edges e = Advance(); return InRange(id) && e.Held[id]; }
         public bool ButtonDown(int id) { Edges e = Advance(); return InRange(id) && e.Down[id]; }
         public bool ButtonUp(int id) { Edges e = Advance(); return InRange(id) && e.Up[id]; }
+        public uint FixedDownCount(int id) { return InRange(id) ? fixedLoop.DownCount[id] : 0; }
 
         public float Axis(int id)
         {
@@ -140,7 +160,7 @@ namespace CupheadOnline.Sync
         public float TimePressed(int id)
         {
             Edges e = Advance();
-            return InRange(id) && e.Held[id] ? Time.unscaledTime - e.PressStart[id] : 0f;
+            return InRange(id) && e.Held[id] ? Time.realtimeSinceStartup - e.PressStart[id] : 0f;
         }
 
         public bool AnyButton()
@@ -188,10 +208,55 @@ namespace CupheadOnline.Sync
         // ---- client sampling ----
         private static readonly PadState local = new PadState();
         private static uint localSeq;
+        private static int sampledFrame = -1;
+        private static EventInfo inputUpdated;
+        private static readonly Action<Rewired.UpdateLoopType> onInputUpdated = OnInputUpdated;
+
+        public static void ResetClient()
+        {
+            localSeq = 0;
+            sampledFrame = -1;
+            local.Held = 0;
+            Array.Clear(local.Presses, 0, local.Presses.Length);
+            Array.Clear(local.Axes, 0, local.Axes.Length);
+        }
+
+        /// <summary>Read edge-triggered actions in Rewired's own Update context, rather than after rendering.</summary>
+        public static void Install()
+        {
+            try
+            {
+                inputUpdated = typeof(Rewired.ReInput).GetEvent("UpdateEndedEvent", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                if (inputUpdated == null) throw new MissingMemberException("ReInput.UpdateEndedEvent");
+                inputUpdated.GetAddMethod(true).Invoke(null, new object[] { onInputUpdated });
+                Plugin.Log.LogInfo("Remote input sampling: Rewired UpdateEndedEvent");
+            }
+            catch (Exception ex)
+            {
+                inputUpdated = null;
+                Plugin.Log.LogWarning("Rewired update sampling unavailable; using frame fallback: " + ex.Message);
+            }
+        }
+
+        private static void OnInputUpdated(Rewired.UpdateLoopType loop)
+        {
+            if (loop != Rewired.UpdateLoopType.Update || !Session.IsClient || Scripted != null || sampledFrame == Time.frameCount) return;
+            SampleLocal();
+        }
+
+        /// <summary>Diagnostic counters in F8 distinguish unmapped local buttons from a transport/physics problem.</summary>
+        public static string Summary(bool host)
+        {
+            PadState state = host ? Remote.Latest : (Scripted ?? local);
+            string result = (host ? "Received" : "Sent") + " input: Dash=" + state.Presses[7] + ", Switch=" + state.Presses[5];
+            if (host) result += " | Physics edges: Dash=" + Remote.FixedDownCount(7) + ", Switch=" + Remote.FixedDownCount(5);
+            return result;
+        }
 
         public static void SampleAndSend(Connection connection)
         {
-            PadState state = Scripted ?? SampleLocal();
+            // LateUpdate only sends the completed sample. Polling Rewired here can select a different edge context.
+            PadState state = Scripted ?? (sampledFrame == Time.frameCount ? local : SampleLocal());
             if (state == null) return;
             NetWriter w = new NetWriter(48);
             w.U32(++localSeq);
@@ -208,18 +273,22 @@ namespace CupheadOnline.Sync
             Sampling = true;
             try
             {
+                ClientController.EnsureAssigned(player);
                 uint held = 0;
                 for (int i = 0; i < PadState.ActionCount; i++)
                 {
                     if (i == 9 || i == 10 || i == 17 || i == 24 || i == 25) continue; // unused ids
-                    if (player.GetButton(i)) held |= 1u << i;
-                    if (player.GetButtonDown(i)) local.Presses[i]++;
+                    bool pressed = player.GetButton(i);
+                    if (pressed) held |= 1u << i;
+                    // A held transition also recovers a press when Rewired's down edge was unavailable at sampling.
+                    if (player.GetButtonDown(i) || (pressed && (local.Held & (1u << i)) == 0)) local.Presses[i]++;
                 }
                 local.Held = held;
                 for (int i = 0; i < PadState.AxisActions.Length; i++)
                 {
                     local.Axes[i] = player.GetAxis(PadState.AxisActions[i]);
                 }
+                sampledFrame = Time.frameCount;
             }
             finally
             {
@@ -253,11 +322,12 @@ namespace CupheadOnline.Sync
 
         public static void OnInputMessage(NetReader r, double now)
         {
-            lastInputTime = now;
-            released = false;
             uint seq = r.U32();
             if (hasRemote && (int)(seq - latestSeq) <= 0) return; // stale / reordered
             Remote.Latest.Read(r);
+            lastInputTime = now;
+            released = false;
+            Remote.ObservePresses();
             if (!hasRemote)
             {
                 Remote.SyncPresses(); // don't replay presses from before we connected

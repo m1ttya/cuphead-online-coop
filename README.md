@@ -310,6 +310,17 @@ seconds. Instead the **host runs the real game** and the **guest's game becomes 
 
 ## 🛠️ For developers
 
+Client rendering, control-menu, late-join music and input timing findings, prepared 0.1.4 fixes, validation limits,
+and latency priorities are documented in [the Russian technical audit](docs/analysis-ru.md).
+Follow-up 0.1.5 changes and two-instance rendering/input checks are documented in
+[the client regression report](docs/client-fixes-0.1.5-ru.md).
+Follow-up 0.1.6 fixes for equipment icons, text layout and music after boss retries, with two-instance checks,
+are documented in [the rendering and music report](docs/client-fixes-0.1.6-ru.md).
+The 0.1.7 fix for Mugman's empty button prompts and propagation of the client's actual bindings is documented
+in [the remote button-caption report](docs/client-fixes-0.1.7-ru.md).
+The deterministic sync checks can be run with `dotnet run --project tools/SyncCheck/SyncCheck.csproj -c Release`.
+They use engine stubs; in-game testing with two peers is still required.
+
 <details>
 <summary><b>Building, releases and testing</b></summary>
 

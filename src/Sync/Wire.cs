@@ -217,6 +217,7 @@ namespace CupheadOnline.Sync
         public byte Alignment, FontStyle;
         public float LineSpacing;
         public bool RichText;
+        public UiTextLayout TextLayout;
         // ordering
         public short CanvasOrder;
         public int Depth;
@@ -235,7 +236,7 @@ namespace CupheadOnline.Sync
             if (Sprite != o.Sprite) m |= SpriteId;
             if (Color.r != o.Color.r || Color.g != o.Color.g || Color.b != o.Color.b || Color.a != o.Color.a) m |= ColorBit;
             if (ImageType != o.ImageType || FillMethod != o.FillMethod || FillOrigin != o.FillOrigin || FillClockwise != o.FillClockwise || PreserveAspect != o.PreserveAspect || !Near(FillAmount, o.FillAmount, 0.001f)) m |= Fill;
-            if (Text != o.Text || Font != o.Font || !Near(FontSize, o.FontSize, 0.0001f) || Alignment != o.Alignment || FontStyle != o.FontStyle || !Near(LineSpacing, o.LineSpacing, 0.001f) || RichText != o.RichText) m |= TextBit;
+            if (Text != o.Text || Font != o.Font || !Near(FontSize, o.FontSize, 0.0001f) || Alignment != o.Alignment || FontStyle != o.FontStyle || !Near(LineSpacing, o.LineSpacing, 0.001f) || RichText != o.RichText || !TextLayout.Same(ref o.TextLayout)) m |= TextBit;
             if (CanvasOrder != o.CanvasOrder || Depth != o.Depth) m |= Order;
             if (Material != o.Material) m |= Mat;
             if (Clip != o.Clip || (Clip && (!Near(ClipX0, o.ClipX0, 0.0002f) || !Near(ClipY0, o.ClipY0, 0.0002f) || !Near(ClipX1, o.ClipX1, 0.0002f) || !Near(ClipY1, o.ClipY1, 0.0002f)))) m |= ClipBit;
@@ -249,7 +250,7 @@ namespace CupheadOnline.Sync
             if ((mask & SpriteId) != 0) Sprite = o.Sprite;
             if ((mask & ColorBit) != 0) Color = o.Color;
             if ((mask & Fill) != 0) { ImageType = o.ImageType; FillMethod = o.FillMethod; FillOrigin = o.FillOrigin; FillClockwise = o.FillClockwise; PreserveAspect = o.PreserveAspect; FillAmount = o.FillAmount; }
-            if ((mask & TextBit) != 0) { Text = o.Text; Font = o.Font; FontSize = o.FontSize; Alignment = o.Alignment; FontStyle = o.FontStyle; LineSpacing = o.LineSpacing; RichText = o.RichText; }
+            if ((mask & TextBit) != 0) { Text = o.Text; Font = o.Font; FontSize = o.FontSize; Alignment = o.Alignment; FontStyle = o.FontStyle; LineSpacing = o.LineSpacing; RichText = o.RichText; TextLayout = o.TextLayout; }
             if ((mask & Order) != 0) { CanvasOrder = o.CanvasOrder; Depth = o.Depth; }
             if ((mask & Mat) != 0) Material = o.Material;
             if ((mask & ClipBit) != 0) { Clip = o.Clip; ClipX0 = o.ClipX0; ClipY0 = o.ClipY0; ClipX1 = o.ClipX1; ClipY1 = o.ClipY1; }
@@ -270,6 +271,7 @@ namespace CupheadOnline.Sync
             if ((mask & TextBit) != 0)
             {
                 w.Str(Text); w.VarU((uint)Font); w.F32(FontSize); w.U8(Alignment); w.U8(FontStyle); w.F32(LineSpacing); w.Bool(RichText);
+                TextLayout.Write(w);
             }
             if ((mask & Order) != 0) { w.I16(CanvasOrder); w.I32(Depth); }
             if ((mask & Mat) != 0) w.VarU((uint)Material);
@@ -296,6 +298,7 @@ namespace CupheadOnline.Sync
             if ((mask & TextBit) != 0)
             {
                 Text = r.Str(); Font = (int)r.VarU(); FontSize = r.F32(); Alignment = r.U8(); FontStyle = r.U8(); LineSpacing = r.F32(); RichText = r.Bool();
+                TextLayout.Read(r);
             }
             if ((mask & Order) != 0) { CanvasOrder = r.I16(); Depth = r.I32(); }
             if ((mask & Mat) != 0) Material = (int)r.VarU();

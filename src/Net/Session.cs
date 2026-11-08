@@ -68,6 +68,7 @@ namespace CupheadOnline.Net
 
         private static void Listen(IDatagramTransport transport)
         {
+            GlyphSync.Reset();
             State = LinkState.Waiting;
             Connection = new Connection(transport);
             Connection.OnMessage += HostOnMessage;
@@ -76,6 +77,7 @@ namespace CupheadOnline.Net
 
         private static void Dial(IDatagramTransport transport)
         {
+            GlyphSync.Reset();
             State = LinkState.Connecting;
             Connection = new Connection(transport);
             Connection.OnMessage += ClientOnMessage;
@@ -138,6 +140,7 @@ namespace CupheadOnline.Net
 
         public static void Stop(string reason)
         {
+            GlyphSync.Reset();
             if (Connection != null)
             {
                 try { Connection.SendBye(); } catch { }
@@ -200,6 +203,19 @@ namespace CupheadOnline.Net
         }
 
         /// <summary>Called late every frame: produce outgoing traffic and flush.</summary>
+        public static void BeforeRender()
+        {
+            if (!IsClient || Connection == null) return;
+            // All Update input processing has finished; ship presses before waiting for rendering/VSync.
+            // Consume snapshots that arrived since Update in time for this frame's canvas rebuild/render.
+            Connection.Receive();
+            if (!IsClient || Connection == null) return;
+            RemoteInput.SampleAndSend(Connection);
+            GlyphSync.TickClient(Connection);
+            Connection.Flush();
+        }
+
+        /// <summary>Called after rendering: capture the host's final transforms and flush traffic.</summary>
         public static void PostUpdate()
         {
             if (Connection == null) return;
@@ -283,6 +299,9 @@ namespace CupheadOnline.Net
                     break;
                 case MsgType.SceneReady:
                     if (State == LinkState.Connected) HostSync.OnClientSceneReady(r.U16());
+                    break;
+                case MsgType.InputLabel:
+                    if (State == LinkState.Connected) GlyphSync.Read(r);
                     break;
                 case MsgType.Bye:
                     if (State != LinkState.Connected) return; // e.g. a rejected peer saying goodbye

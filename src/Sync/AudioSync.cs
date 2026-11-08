@@ -174,7 +174,7 @@ namespace CupheadOnline.Sync
             waiting.RemoveAll(q => (short)(q.Serial - loadedSerial) <= 0);
         }
 
-        public static void ClearWaiting() { waiting.Clear(); }
+        public static void ClearWaiting() { waiting.Clear(); MusicSync.Clear(); }
 
         private static void Replay(byte[] payload)
         {
