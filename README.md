@@ -11,7 +11,7 @@ and music recovery. Both players must update; this release uses network protocol
 You play Cuphead on your own save. Your friend joins as Mugman from their own computer, anywhere.
 
 [![Latest release](https://img.shields.io/github/v/release/m1ttya/cuphead-online-coop?style=for-the-badge&label=release&color=c8102e)](https://github.com/m1ttya/cuphead-online-coop/releases/latest)
-[![macOS](https://img.shields.io/badge/macOS-supported-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](#macos)
+[![macOS](https://img.shields.io/badge/macOS-unverified-d29922?style=for-the-badge&logo=apple&logoColor=white)](#macos)
 [![Windows](https://img.shields.io/badge/Windows-experimental-d29922?style=for-the-badge&logo=windows&logoColor=white)](#windows-experimental)
 [![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb?style=for-the-badge)](LICENSE)
 
@@ -91,8 +91,10 @@ Cuphead isn't found, first run `$env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\co
 
 > [!NOTE]
 > This fork has been checked in two running Windows game instances, including UI rendering, scripted network
-> input and music recovery. The affected friend's physical controller and macOS runtime have not been tested
-> with these changes. See the [validation reports](docs/client-fixes-0.1.7-ru.md) and
+> input and music recovery. The players also tested the client's physical gamepad and confirmed that music
+> and sound effects are audible. They report that everything is currently working as expected, with no bugs
+> encountered in their play session so far. This version has not been tested on macOS.
+> See the [validation reports](docs/client-fixes-0.1.7-ru.md) and
 > [report problems here](https://github.com/m1ttya/cuphead-online-coop/issues).
 
 <details>
