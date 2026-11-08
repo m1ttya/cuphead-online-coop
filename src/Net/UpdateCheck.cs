@@ -13,7 +13,7 @@ namespace CupheadOnline.Net
     /// </summary>
     public static class UpdateCheck
     {
-        private const string LatestReleaseApi = "https://api.github.com/repos/nikrabaev/cuphead-online-coop/releases/latest";
+        private const string LatestReleaseApi = "https://api.github.com/repos/m1ttya/cuphead-online-coop/releases/latest";
 
         /// <summary>Set when a newer release than this build exists, e.g. "0.1.3".</summary>
         public static string NewerVersion { get; private set; }

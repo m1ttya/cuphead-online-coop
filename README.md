@@ -2,10 +2,15 @@
 
 # ☕ Online Co-op for Cuphead
 
+**Client-fix fork maintained by [m1ttya](https://github.com/m1ttya).** Based on
+[nikrabaev/cuphead-online-coop](https://github.com/nikrabaev/cuphead-online-coop), with the original MIT license
+and contributor copyright retained. Version 0.1.7 fixes client input, text, equipment icons, remote button prompts
+and music recovery. Both players must update; this release uses network protocol 7.
+
 **Play Cuphead with a friend over the internet.**<br>
 You play Cuphead on your own save. Your friend joins as Mugman from their own computer, anywhere.
 
-[![Latest release](https://img.shields.io/github/v/release/nikrabaev/cuphead-online-coop?style=for-the-badge&label=release&color=c8102e)](https://github.com/nikrabaev/cuphead-online-coop/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/m1ttya/cuphead-online-coop?style=for-the-badge&label=release&color=c8102e)](https://github.com/m1ttya/cuphead-online-coop/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-supported-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](#macos)
 [![Windows](https://img.shields.io/badge/Windows-experimental-d29922?style=for-the-badge&logo=windows&logoColor=white)](#windows-experimental)
 [![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb?style=for-the-badge)](LICENSE)
@@ -43,7 +48,7 @@ You play Cuphead on your own save. Your friend joins as Mugman from their own co
 
 The installer downloads two things and nothing else: [BepInEx](https://github.com/BepInEx/BepInEx) 5.4.23.5 (the
 standard Unity mod loader) from its official release, and this mod from the
-[latest release](https://github.com/nikrabaev/cuphead-online-coop/releases/latest). Both are checked before anything
+[latest release](https://github.com/m1ttya/cuphead-online-coop/releases/latest). Both are checked before anything
 in the game folder changes.
 
 ### macOS
@@ -51,7 +56,7 @@ in the game folder changes.
 Open **Terminal** and paste:
 
 ```bash
-curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
+curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
 ```
 
 It finds Cuphead in your Steam libraries, installs the mod, and sets Cuphead's Steam launch options so Steam starts
@@ -78,16 +83,17 @@ Run the same command again to update to a newer release.
 Open **PowerShell** and paste:
 
 ```powershell
-irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
+irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
 ```
 
 Then start Cuphead from Steam as usual. On Windows the mod loads automatically; no launch options are needed. If
 Cuphead isn't found, first run `$env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\common\Cuphead'` with your own folder.
 
-> [!WARNING]
-> The mod is developed and tested on macOS. The Windows game runs the same code and the installer has been
-> tested on a simulated setup, but nobody has played the mod on Windows yet. Please [open an issue](https://github.com/nikrabaev/cuphead-online-coop/issues)
-> if it doesn't load.
+> [!NOTE]
+> This fork has been checked in two running Windows game instances, including UI rendering, scripted network
+> input and music recovery. The affected friend's physical controller and macOS runtime have not been tested
+> with these changes. See the [validation reports](docs/client-fixes-0.1.7-ru.md) and
+> [report problems here](https://github.com/m1ttya/cuphead-online-coop/issues).
 
 <details>
 <summary>Manual install</summary>
@@ -96,7 +102,7 @@ Cuphead isn't found, first run `$env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\co
 
 1. Install [BepInEx 5.4.23.5](https://github.com/BepInEx/BepInEx/releases/tag/v5.4.23.5) into the Cuphead folder
    (`BepInEx_macos_universal_*.zip` on macOS, `BepInEx_win_x64_*.zip` on Windows).
-2. Download `CupheadOnline.dll` from the [latest release](https://github.com/nikrabaev/cuphead-online-coop/releases/latest)
+2. Download `CupheadOnline.dll` from the [latest release](https://github.com/m1ttya/cuphead-online-coop/releases/latest)
    and put it in `BepInEx/plugins/`.
 3. macOS only: in `run_bepinex.sh` set `executable_name="Cuphead.app"`, then set Cuphead's Steam launch options to
    `"/path/to/Cuphead/run_bepinex.sh" %command%`.
@@ -131,13 +137,13 @@ are already hosting) for the person you last played with over Steam.
 **macOS** (Terminal):
 
 ```bash
-curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash
+curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash
 ```
 
 **Windows** (PowerShell):
 
 ```powershell
-irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex
+irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex
 ```
 
 This removes the mod and its settings, and BepInEx too unless you have other BepInEx mods installed. To keep BepInEx,
@@ -245,8 +251,8 @@ to direct-IP play only, but this hasn't been tested.
 <br>
 
 The mod is built for Cuphead 1.3.4. A game update can change the code the mod hooks into. Check the
-[releases](https://github.com/nikrabaev/cuphead-online-coop/releases) for a newer version, or
-[open an issue](https://github.com/nikrabaev/cuphead-online-coop/issues).
+[releases](https://github.com/m1ttya/cuphead-online-coop/releases) for a newer version, or
+[open an issue](https://github.com/m1ttya/cuphead-online-coop/issues).
 </details>
 
 ## 🔧 How it works

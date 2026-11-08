@@ -1,6 +1,6 @@
 # Online Co-op for Cuphead (unofficial) - Windows uninstaller.
 #
-#   irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex
+#   irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex
 #
 # If Cuphead isn't found automatically, first run:  $env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\common\Cuphead'
 # To keep the BepInEx mod loader, first run:         $env:CUPHEAD_ONLINE_KEEP_BEPINEX = '1'

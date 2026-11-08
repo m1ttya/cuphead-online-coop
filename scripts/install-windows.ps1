@@ -1,6 +1,6 @@
-# Online Co-op for Cuphead (unofficial) - Windows installer (experimental: the mod is developed and tested on macOS).
+# Online Co-op for Cuphead (unofficial) - Windows installer for m1ttya's client-fix fork.
 #
-#   irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
+#   irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
 #
 # If Cuphead isn't found automatically, first run:  $env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\common\Cuphead'
 #
@@ -12,7 +12,7 @@
     $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on PowerShell 5.1
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $Repo = 'nikrabaev/cuphead-online-coop'
+    $Repo = 'm1ttya/cuphead-online-coop'
     $ReleaseUrl = $env:CUPHEAD_ONLINE_RELEASE_URL
     $BepInEx = @{
         x64 = @{ Url = 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x64_5.4.23.5.zip'; Sha256 = '82f9878551030f54657792c0740d9d51a09500eeae1fba21106b0c441e6732c4' }
@@ -126,7 +126,7 @@
         Write-Host ''
         Say 'Done. Start Cuphead from Steam as usual and press F8 in game to host or join.'
         Write-Host '    Your friend needs the mod too. To uninstall:'
-        Write-Host '    irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex'
+        Write-Host '    irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-windows.ps1 | iex'
     } catch {
         Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     }

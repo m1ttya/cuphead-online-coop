@@ -1,7 +1,7 @@
 #!/bin/bash
 # Online Co-op for Cuphead (unofficial) - macOS uninstaller.
 #
-#   curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash
+#   curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash
 #
 # Options (after "| bash -s --"):
 #   --yes             close Steam without asking (needed to clear Cuphead's launch options)

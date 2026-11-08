@@ -1,7 +1,7 @@
 #!/bin/bash
 # Online Co-op for Cuphead (unofficial) - macOS installer.
 #
-#   curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
+#   curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
 #
 # Options (after "| bash -s --"):
 #   --yes                  close Steam without asking (needed to set Cuphead's launch options)
@@ -13,7 +13,7 @@
 # and sets Cuphead's Steam launch options so Steam starts the game with the mod. Nothing else is installed.
 set -euo pipefail
 
-REPO="nikrabaev/cuphead-online-coop"
+REPO="m1ttya/cuphead-online-coop"
 RELEASE_URL="${CUPHEAD_ONLINE_RELEASE_URL:-}"
 BEPINEX_URL="https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_macos_universal_5.4.23.5.zip"
 BEPINEX_SHA256="01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323"
@@ -247,4 +247,4 @@ if [ "$REOPEN_STEAM" = 1 ]; then /usr/bin/open -a Steam || true; fi
 echo
 say "Done. Start Cuphead from Steam and press F8 in game to host or join."
 echo "    Your friend needs the mod too. To uninstall:"
-echo "    curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash"
+echo "    curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/uninstall-macos.sh | bash"

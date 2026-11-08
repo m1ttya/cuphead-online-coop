@@ -35,7 +35,7 @@ namespace CupheadOnline
         public static ConfigEntry<int> BackupsToKeep;
         public static ConfigEntry<bool> CheckForUpdates;
 
-        public const string RepoUrl = "https://github.com/nikrabaev/cuphead-online-coop";
+        public const string RepoUrl = "https://github.com/m1ttya/cuphead-online-coop";
 
         /// <summary>Patch classes that failed to apply (the game changed under the mod); shown in the menu.</summary>
         public static readonly System.Collections.Generic.List<string> HookFailures = new System.Collections.Generic.List<string>();

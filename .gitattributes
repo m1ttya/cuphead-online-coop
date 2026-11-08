@@ -1,0 +1,2 @@
+# Shell installers must also be runnable when release assets are packaged on Windows.
+*.sh text eol=lf

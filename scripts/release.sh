@@ -40,12 +40,12 @@ Unofficial online co-op mod for Cuphead (game version 1.3.4). Both players need 
 
 **macOS** (Terminal, Steam version of Cuphead):
 \`\`\`bash
-curl -fsSL https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
+curl -fsSL https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-macos.sh | bash
 \`\`\`
 
 **Windows** (PowerShell, experimental):
 \`\`\`powershell
-irm https://github.com/nikrabaev/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
+irm https://github.com/m1ttya/cuphead-online-coop/releases/latest/download/install-windows.ps1 | iex
 \`\`\`
 
 Then start Cuphead from Steam and press **F8**. Uninstall instructions are in the README.
