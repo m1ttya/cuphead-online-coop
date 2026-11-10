@@ -1,41 +1,56 @@
 waitscene scene_level_dragon
 tap Jump 8
-waitsignal reg019b-ready
+waitsignal reg0110c-ready
 bind Dash LeftShift
 bind SwitchWeapon Tab
 nativebuttons
-signal reg019b-client-ready
-waitsignal reg019b-round0
+sourcefault both
+signal reg0110c-client-ready
+waitsignal reg0110c-round0
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done0
-waitsignal reg019b-round1
+signal reg0110c-done0
+waitsignal reg0110c-round1
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done1
-waitsignal reg019b-round2
+signal reg0110c-done1
+waitsignal reg0110c-round2
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done2
-waitsignal reg019b-round3
+signal reg0110c-done2
+waitsignal reg0110c-round3
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done3
-waitsignal reg019b-round4
+signal reg0110c-done3
+waitsignal reg0110c-round4
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done4
-waitsignal reg019b-round5
+signal reg0110c-done4
+waitsignal reg0110c-round5
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done5
-waitsignal reg019b-round6
+signal reg0110c-done5
+waitsignal reg0110c-round6
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-done6
-waitsignal reg019b-retry
+signal reg0110c-done6
+waitsignal reg0110c-retry
 physical LeftShift+Tab 12
+expectreleased
 state
-signal reg019b-retry-done
+signal reg0110c-retry-done
 wait 2
+waitsignal reg0110c-host-shot
+menu on
+wait .5
+shot reg0110c-f8
+signal reg0110c-client-shot
+wait 1
 quit

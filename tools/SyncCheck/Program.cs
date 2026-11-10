@@ -175,8 +175,8 @@ internal static class Program
         Session.Role = Role.Client;
         for (int cycle = 0; cycle < 600; cycle++)
         {
-            hardware.Buttons = 0; Step(30f + cycle * .08f, false); sampleBuffered();
-            hardware.Buttons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
+            hardware.CachedButtons = 0; Step(30f + cycle * .08f, false); sampleBuffered();
+            hardware.CachedButtons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
             Step(30.02f + cycle * .08f, false); sampleBuffered();
             Check(bufferedState.Presses[7] == unchecked((byte)(cycle + 1)) && bufferedState.Presses[5] == unchecked((byte)(cycle + 1)),
                 "mapped physical buttons survive frozen native actions, cycle " + cycle);
@@ -190,10 +190,10 @@ internal static class Program
                 mappedPlayer.controllers.maps.All[0] = criticalMap;
             }
         }
-        hardware.Buttons = 0;
+        hardware.CachedButtons = 0;
         Session.Role = Role.Host; RemoteInput.DriveHostPlayerTwo = true; RemoteInput.ResetHost();
         Step(100f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
-        hardware.Buttons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
+        hardware.CachedButtons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
         Step(100.02f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
         var hostButtons = RemoteInput.ButtonPadFor(mappedPlayer, 7);
         Check(hostButtons != null && hostButtons.ButtonDown(7) && hostButtons.ButtonDown(5), "host physical mapped actions bypass frozen native action cache");
@@ -209,9 +209,9 @@ internal static class Program
         Check(RemoteInput.ButtonPadFor(mappedPlayer, 7) == null && RemoteInput.ButtonPadFor(mappedPlayer, 5) != null,
             "axis binding falls back to native thresholds without disabling other recovered buttons");
         mappedPlayer.controllers.maps.All.Clear();
-        var keyboard = new Rewired.Keyboard { HeldKey = Rewired.KeyCode.K };
+        var keyboard = new Rewired.Keyboard { HeldKey = UnityEngine.KeyCode.K };
         mappedPlayer.controllers.Assigned = keyboard;
-        var keyBinding = new Rewired.ActionElementMap { actionId = 7, keyCode = Rewired.KeyCode.K, modifierKey1 = Rewired.ModifierKey.Control };
+        var keyBinding = new Rewired.ActionElementMap { actionId = 7, keyCode = UnityEngine.KeyCode.K, modifierKey1 = Rewired.ModifierKey.Control };
         mappedPlayer.controllers.maps.All.Add(new Rewired.ControllerMap { Bindings = new[] { keyBinding } });
         uint physical;
         Check(MappedButtons.Read(mappedPlayer, out physical) == (1u << 7) && physical == 0, "custom keyboard binding requires its configured modifier");
@@ -223,6 +223,159 @@ internal static class Program
         Step(101f, true);
         Check(!hostButtons.ButtonDown(7) && !hostButtons.ButtonDown(5), "host session reset cannot replay zeroed critical-button counters");
         Session.Role = Role.None; RemoteInput.DriveHostPlayerTwo = false;
+
+        Check(PhysicalButtons.Available, "physical source bridge resolves the controller updater and input gate");
+        mappedPlayer.controllers.Assigned = hardware;
+        hardware.inputData = new Rewired.ControllerDataUpdater();
+        dashBinding = new Rewired.ActionElementMap { actionId = 7, elementIdentifierId = 3 };
+        switchBinding = new Rewired.ActionElementMap { actionId = 5, elementIdentifierId = 4 };
+        criticalMap = new Rewired.ControllerMap { controllerType = Rewired.ControllerType.Joystick,
+            Bindings = new[] { dashBinding, switchBinding } };
+        mappedPlayer.controllers.maps.All.Add(criticalMap);
+        uint cached, bypass;
+        hardware.CachedButtons = (1u << 3) | (1u << 4);
+        Check(MappedButtons.Read(mappedPlayer, out physical, out cached, out bypass) == MappedButtons.Mask
+            && physical == 0 && cached == MappedButtons.Mask && bypass == MappedButtons.Mask,
+            "released source overrides both stuck controller-button caches (the 0.1.9 failure path)");
+        Session.Role = Role.Client;
+        foreach (uint stuck in new[] { 1u << 3, 1u << 4, (1u << 3) | (1u << 4) })
+        {
+            RemoteInput.ResetClient(); hardware.CachedButtons = stuck;
+            for (int press = 1; press <= 16; press++)
+            {
+                hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = false;
+                Step(110f + press + stuck, false); sampleBuffered();
+                Check((bufferedState.Held & MappedButtons.Mask) == 0,
+                    "source release clears client Held despite stuck cache " + stuck + ", press " + press);
+                hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = true;
+                Step(110.02f + press + stuck, false); sampleBuffered();
+                Check(bufferedState.Presses[7] == press && bufferedState.Presses[5] == press,
+                    "next client press survives stuck cache " + stuck + ", press " + press);
+                Step(110.04f + press + stuck, false); sampleBuffered();
+                Check(bufferedState.Presses[7] == press && bufferedState.Presses[5] == press,
+                    "recovery never auto-repeats a real held button " + stuck + ", press " + press);
+            }
+        }
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = false;
+        Session.Role = Role.Host; RemoteInput.DriveHostPlayerTwo = true; RemoteInput.ResetHost();
+        Step(200f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        Check(RemoteInput.Summary(true).Contains("Host held=none") && RemoteInput.Summary(true).Contains("Host controller cache=Dash Switch"),
+            "F8 distinguishes host released source from its stuck controller cache");
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = true;
+        Step(200.02f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        var recoveredHost = RemoteInput.ButtonPadFor(mappedPlayer, 7);
+        Step(200.03f, true);
+        Check(recoveredHost.ButtonDown(7) && recoveredHost.ButtonDown(5), "host source recovery reaches both gameplay actions in FixedUpdate");
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = false;
+        Step(200.04f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        Step(200.05f, true);
+        Check(!recoveredHost.Button(7) && !recoveredHost.Button(5), "host Held releases while cached controller buttons remain stuck");
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = true;
+        Step(200.06f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        Step(200.07f, true);
+        Check(recoveredHost.ButtonDown(7) && recoveredHost.ButtonDown(5) && recoveredHost.FixedDownCount(7) == 2,
+            "host next press works without resetting the controller or rebinding");
+        Step(201f, false); RemoteInput.ButtonPadFor(mappedPlayer, 7); // early query before Rewired completes Update
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = false;
+        Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        Check(RemoteInput.Summary(true).Contains("Host held=none"), "early host query cannot hide a source release later in the same frame");
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = true;
+        Rewired.ReInput.InputAllowed = false;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == 0, "source bypass respects Rewired's input gate when focus/input is blocked");
+        Rewired.ReInput.InputAllowed = true; hardware.isConnected = false;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == 0, "disconnected controller cannot keep source Held stuck");
+        hardware.isConnected = true; hardware.enabled = false;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == 0, "disabled controller cannot leak raw source input");
+        hardware.enabled = true;
+        hardware.Buttons[3].isPressureSensitive = true;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check((physical & (1u << 7)) == 0, "pressure-sensitive button uses released pressure instead of a stale boolean cache");
+        hardware.inputData.buttonPressureValues[3] = .5f;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check((physical & (1u << 7)) != 0, "pressure-sensitive button uses the same positive-pressure rule as native Rewired");
+        mappedPlayer.controllers.maps.All.Clear();
+        keyboard.inputData = new Rewired.ControllerDataUpdater(); keyboard.Control = true;
+        mappedPlayer.controllers.Assigned = keyboard;
+        mappedPlayer.controllers.maps.All.Add(new Rewired.ControllerMap { Bindings = new[] { keyBinding } });
+        MappedButtons.Read(mappedPlayer, out physical, out cached, out bypass);
+        Check(physical == 0 && cached == (1u << 7) && bypass == (1u << 7), "stuck keyboard key/modifier cache cannot mask source release");
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = true;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == 0, "cached modifier alone cannot activate a physical keyboard binding");
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.RightControl)] = true;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == (1u << 7), "source modifier from either side of the keyboard activates the binding");
+        mappedPlayer.controllers.ByType[Rewired.ControllerType.Keyboard] = keyboard;
+        mappedPlayer.controllers.ByType[Rewired.ControllerType.Joystick] = hardware;
+        mappedPlayer.controllers.maps.All.Add(criticalMap);
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = false;
+        hardware.inputData.buttonValues[3] = hardware.inputData.buttonValues[4] = false;
+        hardware.inputData.buttonPressureValues[3] = 0;
+        MappedButtons.Read(mappedPlayer, out physical, out cached, out bypass);
+        Check(physical == 0 && cached == MappedButtons.Mask && bypass == MappedButtons.Mask,
+            "OR across stale keyboard and gamepad caches cannot keep either source Held stuck");
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = true;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == (1u << 7), "real keyboard input still works with a gamepad assigned");
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = false;
+        hardware.inputData.buttonPressureValues[3] = .7f; hardware.inputData.buttonValues[4] = true;
+        MappedButtons.Read(mappedPlayer, out physical);
+        Check(physical == MappedButtons.Mask, "real gamepad input still works with stale keyboard caches");
+        Check(hardware.CachedButtons == ((1u << 3) | (1u << 4)) && keyboard.Control,
+            "source bypass never resets the controller cache or saved bindings");
+        // Reproduce the other OR-latch: an alternate binding's source itself never reports release.
+        // New gamepad presses must still work, then its release must clear the working Held.
+        hardware.inputData.buttonPressureValues[3] = 0; hardware.inputData.buttonValues[4] = false;
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = true;
+        RemoteInput.ResetClient(); Session.Role = Role.Client;
+        Step(210f, false); sampleBuffered();
+        Check(bufferedState.Presses[7] == 1 && bufferedState.Presses[5] == 0, "initial alternate held binding is sampled once");
+        for (int press = 1; press <= 8; press++)
+        {
+            hardware.inputData.buttonPressureValues[3] = .7f; hardware.inputData.buttonValues[4] = true;
+            Step(210f + press, false); sampleBuffered();
+            Check(bufferedState.Presses[7] == press + 1 && bufferedState.Presses[5] == press,
+                "new gamepad press survives an already-held keyboard source " + press);
+            Step(210.02f + press, false); sampleBuffered();
+            Check(bufferedState.Presses[7] == press + 1 && bufferedState.Presses[5] == press,
+                "binding ownership never turns a hold into repeated input " + press);
+            hardware.inputData.buttonPressureValues[3] = 0; hardware.inputData.buttonValues[4] = false;
+            Step(210.04f + press, false); sampleBuffered();
+            Check((bufferedState.Held & MappedButtons.Mask) == 0,
+                "gamepad release clears working Held despite latched alternate source " + press);
+        }
+        Step(220f, false); sampleBuffered();
+        Check(bufferedState.Presses[7] == 9 && bufferedState.Held == 0, "latched old source cannot reclaim ownership or create auto-repeat");
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = false;
+        Step(220.02f, false); sampleBuffered();
+        keyboard.inputData.buttonValues[keyboard.GetButtonIndexByKeyCode(KeyCode.K)] = true;
+        Step(220.04f, false); sampleBuffered();
+        Check(bufferedState.Presses[7] == 10 && (bufferedState.Held & (1u << 7)) != 0,
+            "keyboard can take control again after a genuine release and press");
+        Session.Role = Role.Host; RemoteInput.ResetHost();
+        Step(221f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        hardware.inputData.buttonPressureValues[3] = .7f; hardware.inputData.buttonValues[4] = true;
+        Step(221.02f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        var ownerHost = RemoteInput.ButtonPadFor(mappedPlayer, 7);
+        Step(221.03f, true);
+        Check(ownerHost.ButtonDown(7) && ownerHost.ButtonDown(5) && ownerHost.Latest.Presses[7] == 2,
+            "host accepts a fresh gamepad press despite a stuck keyboard source");
+        hardware.inputData.buttonPressureValues[3] = 0; hardware.inputData.buttonValues[4] = false;
+        Step(221.04f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        Step(221.05f, true);
+        Check(!ownerHost.Button(7) && !ownerHost.Button(5), "host releases latest physical binding without reviving the stuck alternate source");
+        var duplicateHistory = new ButtonSources(); uint fresh;
+        hardware.inputData.buttonPressureValues[3] = .7f;
+        mappedPlayer.controllers.maps.All.Add(criticalMap); // duplicate maps of the same physical binding
+        MappedButtons.Read(mappedPlayer, out physical, out cached, out bypass, duplicateHistory, out fresh);
+        MappedButtons.Read(mappedPlayer, out physical, out cached, out bypass, duplicateHistory, out fresh);
+        Check(fresh == 0, "duplicate/repeated maps of one held physical binding do not create fresh presses");
+        mappedPlayer.controllers.ByType.Clear();
+        mappedPlayer.controllers.maps.All.Clear(); mappedPlayer.controllers.Assigned = null;
+        RemoteInput.ResetClient(); RemoteInput.ResetHost(); Session.Role = Role.None; RemoteInput.DriveHostPlayerTwo = false;
 
         var localLabels = new InputLabels(); var remoteLabels = new InputLabels();
         senderTransport = new MemoryTransport(); sender = new Connection(senderTransport);

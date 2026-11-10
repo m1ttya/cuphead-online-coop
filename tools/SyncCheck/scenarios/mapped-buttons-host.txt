@@ -9,11 +9,13 @@ wait 3
 bind Dash LeftShift
 bind SwitchWeapon Tab
 nativebuttons
-signal reg019b-ready
-waitsignal reg019b-client-ready
-signal reg019b-round0
+sourcefault both
+signal reg0110c-ready
+waitsignal reg0110c-client-ready
+signal reg0110c-round0
 physical LeftShift+Tab 12
-waitsignal reg019b-done0
+expectreleased
+waitsignal reg0110c-done0
 wait 1
 expectinput 12 12
 expecthostinput 12 12
@@ -21,9 +23,10 @@ state
 level DicePalaceMain Normal
 wait 9
 waitp2
-signal reg019b-round1
+signal reg0110c-round1
 physical LeftShift+Tab 12
-waitsignal reg019b-done1
+expectreleased
+waitsignal reg0110c-done1
 wait 1
 expectinput 24 24
 expecthostinput 24 24
@@ -31,9 +34,10 @@ state
 level DicePalaceBooze Normal
 wait 9
 waitp2
-signal reg019b-round2
+signal reg0110c-round2
 physical LeftShift+Tab 12
-waitsignal reg019b-done2
+expectreleased
+waitsignal reg0110c-done2
 wait 1
 expectinput 36 36
 expecthostinput 36 36
@@ -41,9 +45,10 @@ state
 level DicePalaceMain Normal
 wait 9
 waitp2
-signal reg019b-round3
+signal reg0110c-round3
 physical LeftShift+Tab 12
-waitsignal reg019b-done3
+expectreleased
+waitsignal reg0110c-done3
 wait 1
 expectinput 48 48
 expecthostinput 48 48
@@ -51,9 +56,10 @@ state
 level DicePalaceChips Normal
 wait 9
 waitp2
-signal reg019b-round4
+signal reg0110c-round4
 physical LeftShift+Tab 12
-waitsignal reg019b-done4
+expectreleased
+waitsignal reg0110c-done4
 wait 1
 expectinput 60 60
 expecthostinput 60 60
@@ -61,9 +67,10 @@ state
 level DicePalaceMain Normal
 wait 9
 waitp2
-signal reg019b-round5
+signal reg0110c-round5
 physical LeftShift+Tab 12
-waitsignal reg019b-done5
+expectreleased
+waitsignal reg0110c-done5
 wait 1
 expectinput 72 72
 expecthostinput 72 72
@@ -71,9 +78,10 @@ state
 level Veggies Normal
 wait 9
 waitp2
-signal reg019b-round6
+signal reg0110c-round6
 physical LeftShift+Tab 12
-waitsignal reg019b-done6
+expectreleased
+waitsignal reg0110c-done6
 wait 1
 expectinput 84 84
 expecthostinput 84 84
@@ -86,11 +94,17 @@ retrymenu
 waitreload
 waitp2
 wait 4
-signal reg019b-retry
+signal reg0110c-retry
 physical LeftShift+Tab 12
-waitsignal reg019b-retry-done
+expectreleased
+waitsignal reg0110c-retry-done
 wait 1
 expectinput 96 96
 expecthostinput 96 96
 state
+menu on
+wait .5
+shot reg0110c-f8
+signal reg0110c-host-shot
+waitsignal reg0110c-client-shot
 quit

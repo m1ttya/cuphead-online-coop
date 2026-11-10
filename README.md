@@ -4,7 +4,7 @@
 
 **Client-fix fork maintained by [m1ttya](https://github.com/m1ttya).** Based on
 [nikrabaev/cuphead-online-coop](https://github.com/nikrabaev/cuphead-online-coop), with the original MIT license
-and contributor copyright retained. Version 0.1.9 adds direct mapped-button sampling for dash and weapon switching on both peers,
+and contributor copyright retained. Version 0.1.10 reads source button values to recover stuck dash and weapon switching on both peers,
 while retaining the text, equipment-icon and music fixes. Both players must update; this release uses network protocol 8.
 
 **Play Cuphead with a friend over the internet.**<br>
@@ -90,8 +90,8 @@ Then start Cuphead from Steam as usual. On Windows the mod loads automatically; 
 Cuphead isn't found, first run `$env:CUPHEAD_DIR = 'D:\SteamLibrary\steamapps\common\Cuphead'` with your own folder.
 
 > [!NOTE]
-> Windows: experimental; 0.1.9 passed automated and two-instance input checks. macOS has not been tested.
-> See the [input regression report](docs/client-fixes-0.1.9-ru.md) and
+> Windows: experimental; 0.1.10 passed automated and two-instance stuck-button checks. macOS has not been tested.
+> See the [input regression report](docs/client-fixes-0.1.10-ru.md) and
 > [report problems here](https://github.com/m1ttya/cuphead-online-coop/issues).
 
 <details>
@@ -323,8 +323,8 @@ Follow-up 0.1.6 fixes for equipment icons, text layout and music after boss retr
 are documented in [the rendering and music report](docs/client-fixes-0.1.6-ru.md).
 The 0.1.7 fix for Mugman's empty button prompts and propagation of the client's actual bindings is documented
 in [the remote button-caption report](docs/client-fixes-0.1.7-ru.md).
-The 0.1.9 mapped-button sampling and input regression checks are documented in
-[the input regression report](docs/client-fixes-0.1.9-ru.md).
+The 0.1.10 source-button recovery and input regression checks are documented in
+[the input regression report](docs/client-fixes-0.1.10-ru.md).
 The deterministic sync checks can be run with `dotnet run --project tools/SyncCheck/SyncCheck.csproj -c Release`.
 They use engine stubs; in-game testing with two peers is still required.
 

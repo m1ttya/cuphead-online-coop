@@ -6,6 +6,7 @@ using System.Reflection;
 
 namespace UnityEngine
 {
+    public enum KeyCode { None, LeftShift, Tab, K, LeftControl, RightControl, RightShift, LeftAlt, RightAlt, LeftCommand, RightCommand }
     public class Object
     {
         public string name;
@@ -64,24 +65,40 @@ namespace HarmonyLib
     public static class AccessTools
     {
         public static FieldInfo Field(Type type, string name) => type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        public static MethodInfo Method(Type type, string name, Type[] args) => type.GetMethod(name,
+            BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, args, null);
     }
 }
 namespace Rewired
 {
+    using UnityEngine;
     public enum UpdateLoopType { Update, FixedUpdate, OnGUI }
     public enum ControllerType { Keyboard, Joystick }
     public enum ControllerElementType { Button, Axis }
-    public enum ModifierKey { None, Control }
-    public enum KeyCode { None, LeftShift, Tab, K }
+    public enum ModifierKey { None, Control, Alt, Shift, Command }
+    internal class ControllerDataUpdater
+    {
+        public bool[] buttonValues = new bool[32];
+        public float[] buttonPressureValues = new float[32];
+    }
     public class Controller
     {
-        public uint Buttons;
-        public bool GetButtonById(int id) => (Buttons & (1u << id)) != 0;
+        public class Button { public bool isPressureSensitive; }
+        public IList<Button> Buttons = new List<Button>();
+        internal ControllerDataUpdater inputData;
+        public uint CachedButtons;
+        public bool enabled = true, isConnected = true;
+        public ControllerType type = ControllerType.Joystick;
+        public Controller() { for (int i = 0; i < 32; i++) Buttons.Add(new Button()); }
+        public int GetButtonIndexById(int id) => id;
+        public bool GetButtonById(int id) => (CachedButtons & (1u << id)) != 0;
     }
     public class Keyboard : Controller
     {
         public KeyCode HeldKey;
         public bool Control;
+        public Keyboard() { type = ControllerType.Keyboard; }
+        public int GetButtonIndexByKeyCode(KeyCode key) => (int)key;
         public bool GetKey(KeyCode key) => key != KeyCode.None && key == HeldKey;
         public bool GetModifierKey(ModifierKey key) => key == ModifierKey.None || Control;
     }
@@ -111,7 +128,8 @@ namespace Rewired
     {
         public MapHelper maps = new MapHelper();
         public Controller Assigned;
-        public Controller GetController(ControllerType type, int id) => Assigned;
+        public Dictionary<ControllerType, Controller> ByType = new Dictionary<ControllerType, Controller>();
+        public Controller GetController(ControllerType type, int id) => ByType.Count == 0 ? Assigned : ByType.TryGetValue(type, out var value) ? value : null;
     }
     public class Player
     {
@@ -125,6 +143,8 @@ namespace Rewired
     }
     public static class ReInput
     {
+        public static bool InputAllowed = true;
+        internal static bool IsInputAllowed(ControllerType type) => InputAllowed;
         internal static event Action<UpdateLoopType> UpdateEndedEvent;
         public static void EndUpdate(UpdateLoopType loop) { UpdateEndedEvent?.Invoke(loop); }
         public class Players

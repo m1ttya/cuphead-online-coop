@@ -50,6 +50,7 @@ namespace CupheadOnline.Sync
         public static int KeyboardPulse;
         public static float CaptionFailureUntil;
         public static bool NativeButtonTest;
+        public static uint StuckButtonMask;
         public static KeyCode[] PhysicalTestKeys = new KeyCode[0];
         public static readonly bool ReadOnlySaves = Environment.GetEnvironmentVariable("CUPHEAD_ONLINE_TEST_READONLY") == "1";
         private static bool keepInvincible, keepRunning;
@@ -120,6 +121,19 @@ namespace CupheadOnline.Sync
                         NativeButtonTest = true;
                         Log("Native mapped-button regression enabled; native Dash/Switch actions forced neutral");
                         break;
+                    case "sourcefault":
+                        StuckButtonMask = a[1] == "off" ? 0 : a[1] == "both" ? MappedButtons.Mask : 1u << Button(a[1]);
+                        Log("Controller cache fault mask=" + StuckButtonMask);
+                        break;
+                    case "expectreleased":
+                    {
+                        string summary = RemoteInput.Summary(Session.IsHost);
+                        bool correct = summary.Contains(Session.IsHost ? "Host held=none" : "Held=none")
+                            && summary.Contains("Source bypass=Dash Switch");
+                        if (StuckButtonMask == MappedButtons.Mask) correct &= summary.Contains("controller cache=Dash Switch");
+                        Log((correct ? "PASS " : "FAIL ") + "source release with cached-button fault: " + summary);
+                        break;
+                    }
                     case "physical":
                     {
                         string[] names = a[1].Split('+');

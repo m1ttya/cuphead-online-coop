@@ -13,8 +13,22 @@ namespace CupheadOnline.Sync
 
         public static uint Read(Player player, out uint held)
         {
-            held = 0;
-            uint readable = 0, unsupported = 0;
+            uint cached, source;
+            return Read(player, out held, out cached, out source);
+        }
+
+        public static uint Read(Player player, out uint held, out uint cached, out uint source)
+        {
+            uint down;
+            return Read(player, out held, out cached, out source, null, out down);
+        }
+
+        public static uint Read(Player player, out uint held, out uint cached, out uint source, ButtonSources history, out uint down)
+        {
+            held = cached = source = 0;
+            down = 0;
+            if (history != null) history.Begin();
+            uint readable = 0, unsupported = 0, fallback = 0;
             foreach (ControllerMap map in player.controllers.maps.GetAllMaps())
             {
                 if (!map.enabled) continue;
@@ -34,9 +48,16 @@ namespace CupheadOnline.Sync
                         ? keyboard.GetKey(binding.keyCode) && Modifier(keyboard, binding.modifierKey1)
                             && Modifier(keyboard, binding.modifierKey2) && Modifier(keyboard, binding.modifierKey3)
                         : controller.GetButtonById(binding.elementIdentifierId);
+                    if (pressed) cached |= bit;
+                    bool raw;
+                    if (PhysicalButtons.TryRead(controller, binding, out raw)) pressed = raw;
+                    else fallback |= bit;
+                    if (history != null) history.Add(controller, binding, pressed);
                     if (pressed) held |= bit;
                 }
             }
+            source = readable & ~unsupported & ~fallback;
+            if (history != null) held = history.Finish(out down);
             return readable & ~unsupported;
         }
 

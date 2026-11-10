@@ -224,6 +224,8 @@ namespace CupheadOnline.Sync
         public static readonly VirtualPad Remote = new VirtualPad();
         private static readonly VirtualPad hostButtons = new VirtualPad();
         private static uint hostMapped;
+        private static uint hostCached, hostSource, localCached, localSource;
+        private static readonly ButtonSources hostSources = new ButtonSources(), clientSources = new ButtonSources();
         private static int hostSampleFrame = -1;
         private static float nextMappingWarning;
 
@@ -246,6 +248,8 @@ namespace CupheadOnline.Sync
             sampledFrame = -1;
             sampledAt = -100f;
             local.Held = 0;
+            localCached = localSource = 0;
+            clientSources.Reset();
             Array.Clear(local.Presses, 0, local.Presses.Length);
             Array.Clear(local.Axes, 0, local.Axes.Length);
         }
@@ -259,6 +263,7 @@ namespace CupheadOnline.Sync
                 if (inputUpdated == null) throw new MissingMemberException("ReInput.UpdateEndedEvent");
                 inputUpdated.GetAddMethod(true).Invoke(null, new object[] { onInputUpdated });
                 Plugin.Log.LogInfo("Remote input sampling: Rewired UpdateEndedEvent");
+                Plugin.Log.LogInfo("Physical button source bypass: " + (PhysicalButtons.Available ? "available" : "unavailable; cached API fallback"));
             }
             catch (Exception ex)
             {
@@ -271,16 +276,17 @@ namespace CupheadOnline.Sync
         {
             if (loop != Rewired.UpdateLoopType.Update) return;
             if (Session.IsClient && Scripted == null && sampledFrame != Time.frameCount) SampleLocal();
-            else if (Session.IsHost && DriveHostPlayerTwo && TestDriver.HostPad == null) SampleHostButtons();
+            else if (Session.IsHost && DriveHostPlayerTwo && TestDriver.HostPad == null) SampleHostButtons(true);
         }
 
-        private static uint ReadMapped(Rewired.Player player, out uint held)
+        private static uint ReadMapped(Rewired.Player player, out uint held, out uint cached, out uint source, ButtonSources history, out uint down)
         {
-            try { return MappedButtons.Read(player, out held); }
+            try { return MappedButtons.Read(player, out held, out cached, out source, history, out down); }
             catch (Exception ex)
             {
                 // Device removal/map replacement can race a sample. Fall back to native input for this frame.
-                held = 0;
+                held = cached = source = down = 0;
+                history.Reset();
                 if (Time.realtimeSinceStartup >= nextMappingWarning)
                 {
                     nextMappingWarning = Time.realtimeSinceStartup + 5f;
@@ -290,14 +296,16 @@ namespace CupheadOnline.Sync
             }
         }
 
-        private static void SampleHostButtons()
+        private static void SampleHostButtons(bool inputJustUpdated = false)
         {
-            if (hostSampleFrame == Time.frameCount) return;
+            // A game query in FixedUpdate can precede Rewired's Update. That early fallback must not prevent
+            // the completed Update sample from observing a release later in the same rendered frame.
+            if (hostSampleFrame == Time.frameCount && !inputJustUpdated) return;
             hostSampleFrame = Time.frameCount;
-            uint held;
-            hostMapped = ReadMapped(Rewired.ReInput.players.GetPlayer(0), out held);
+            uint held, down;
+            hostMapped = ReadMapped(Rewired.ReInput.players.GetPlayer(0), out held, out hostCached, out hostSource, hostSources, out down);
             held &= hostMapped;
-            uint edges = held & ~hostButtons.Latest.Held;
+            uint edges = (down | (held & ~hostButtons.Latest.Held)) & hostMapped;
             for (int i = 0; i < PadState.ActionCount; i++)
                 if ((edges & (1u << i)) != 0) hostButtons.Latest.Presses[i]++;
             hostButtons.Latest.Held = held;
@@ -311,12 +319,19 @@ namespace CupheadOnline.Sync
             string result = (host ? "Received" : "Sent") + " input: Dash=" + state.Presses[7] + ", Switch=" + state.Presses[5];
             if (host) result += " | Physics edges: Dash=" + Remote.FixedDownCount(7) + ", Switch=" + Remote.FixedDownCount(5);
             if (host) result += " | Host local: Dash=" + hostButtons.Latest.Presses[7] + ", Switch=" + hostButtons.Latest.Presses[5];
-            uint held = state.Held;
-            result += " | Held=" + (((held >> 7) & 1) != 0 ? "Dash " : "") + (((held >> 5) & 1) != 0 ? "Switch" : "");
-            if ((held & ((1u << 7) | (1u << 5))) == 0) result += "none";
+            result += " | " + (host ? "Remote held=" : "Held=") + HeldNames(state.Held);
+            if (host) result += " | Host held=" + HeldNames(hostButtons.Latest.Held);
+            result += " | " + (host ? "Host" : "Local") + " controller cache=" + HeldNames(host ? hostCached : localCached);
+            result += " | Source bypass=" + HeldNames(host ? hostSource : localSource);
             if (host && hasRemote) result += " | Input age=" + (Time.realtimeSinceStartup - receivedAt).ToString("0.00") + "s";
             if (!host && sampledFrame >= 0) result += " | Sample age=" + (Time.realtimeSinceStartup - sampledAt).ToString("0.00") + "s";
             return result;
+        }
+
+        private static string HeldNames(uint held)
+        {
+            held &= MappedButtons.Mask;
+            return held == 0 ? "none" : ((held & (1u << 7)) != 0 ? "Dash " : "") + ((held & (1u << 5)) != 0 ? "Switch" : "");
         }
 
         public static void SampleAndSend(Connection connection)
@@ -340,8 +355,8 @@ namespace CupheadOnline.Sync
             try
             {
                 ClientController.EnsureAssigned(player);
-                uint mappedHeld;
-                uint mapped = ReadMapped(player, out mappedHeld);
+                uint mappedHeld, mappedDown;
+                uint mapped = ReadMapped(player, out mappedHeld, out localCached, out localSource, clientSources, out mappedDown);
                 uint held = 0, down = 0;
                 for (int i = 0; i < PadState.ActionCount; i++)
                 {
@@ -349,12 +364,13 @@ namespace CupheadOnline.Sync
                     bool direct = (mapped & (1u << i)) != 0;
                     bool pressed = direct ? (mappedHeld & (1u << i)) != 0 : player.GetButton(i);
                     if (pressed) held |= 1u << i;
-                    bool edge = direct ? pressed && (local.Held & (1u << i)) == 0 : player.GetButtonDown(i);
+                    bool edge = direct ? (mappedDown & (1u << i)) != 0 : player.GetButtonDown(i);
                     if (edge) down |= 1u << i;
                     // A held transition also recovers a press when Rewired's down edge was unavailable at sampling.
                     // Buffered GetButtonDown may remain true across frames, including after release. Do not
                     // turn that one native press into new network presses that can leak into a later menu.
-                    if ((edge && (localDown & (1u << i)) == 0) || (pressed && (local.Held & (1u << i)) == 0)) local.Presses[i]++;
+                    bool rising = pressed && (local.Held & (1u << i)) == 0;
+                    if (direct ? edge || rising : (edge && (localDown & (1u << i)) == 0) || rising) local.Presses[i]++;
                 }
                 local.Held = held;
                 localDown = down;
@@ -385,6 +401,8 @@ namespace CupheadOnline.Sync
             Array.Clear(hostButtons.Latest.Presses, 0, hostButtons.Latest.Presses.Length);
             hostButtons.Reset();
             hostMapped = 0;
+            hostCached = hostSource = 0;
+            hostSources.Reset();
             hostSampleFrame = -1;
         }
 
