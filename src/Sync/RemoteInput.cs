@@ -222,6 +222,10 @@ namespace CupheadOnline.Sync
         public static bool BlockLocalGame;
 
         public static readonly VirtualPad Remote = new VirtualPad();
+        private static readonly VirtualPad hostButtons = new VirtualPad();
+        private static uint hostMapped;
+        private static int hostSampleFrame = -1;
+        private static float nextMappingWarning;
 
         /// <summary>Optional scripted pad (test driver): replaces local sampling on the client, drives P1 on the host.</summary>
         public static PadState Scripted;
@@ -265,8 +269,39 @@ namespace CupheadOnline.Sync
 
         private static void OnInputUpdated(Rewired.UpdateLoopType loop)
         {
-            if (loop != Rewired.UpdateLoopType.Update || !Session.IsClient || Scripted != null || sampledFrame == Time.frameCount) return;
-            SampleLocal();
+            if (loop != Rewired.UpdateLoopType.Update) return;
+            if (Session.IsClient && Scripted == null && sampledFrame != Time.frameCount) SampleLocal();
+            else if (Session.IsHost && DriveHostPlayerTwo && TestDriver.HostPad == null) SampleHostButtons();
+        }
+
+        private static uint ReadMapped(Rewired.Player player, out uint held)
+        {
+            try { return MappedButtons.Read(player, out held); }
+            catch (Exception ex)
+            {
+                // Device removal/map replacement can race a sample. Fall back to native input for this frame.
+                held = 0;
+                if (Time.realtimeSinceStartup >= nextMappingWarning)
+                {
+                    nextMappingWarning = Time.realtimeSinceStartup + 5f;
+                    Plugin.Log.LogWarning("Mapped button sampling: " + ex.Message);
+                }
+                return 0;
+            }
+        }
+
+        private static void SampleHostButtons()
+        {
+            if (hostSampleFrame == Time.frameCount) return;
+            hostSampleFrame = Time.frameCount;
+            uint held;
+            hostMapped = ReadMapped(Rewired.ReInput.players.GetPlayer(0), out held);
+            held &= hostMapped;
+            uint edges = held & ~hostButtons.Latest.Held;
+            for (int i = 0; i < PadState.ActionCount; i++)
+                if ((edges & (1u << i)) != 0) hostButtons.Latest.Presses[i]++;
+            hostButtons.Latest.Held = held;
+            hostButtons.ObservePresses();
         }
 
         /// <summary>Diagnostic counters in F8 distinguish unmapped local buttons from a transport/physics problem.</summary>
@@ -275,6 +310,7 @@ namespace CupheadOnline.Sync
             PadState state = host ? Remote.Latest : (Scripted ?? local);
             string result = (host ? "Received" : "Sent") + " input: Dash=" + state.Presses[7] + ", Switch=" + state.Presses[5];
             if (host) result += " | Physics edges: Dash=" + Remote.FixedDownCount(7) + ", Switch=" + Remote.FixedDownCount(5);
+            if (host) result += " | Host local: Dash=" + hostButtons.Latest.Presses[7] + ", Switch=" + hostButtons.Latest.Presses[5];
             uint held = state.Held;
             result += " | Held=" + (((held >> 7) & 1) != 0 ? "Dash " : "") + (((held >> 5) & 1) != 0 ? "Switch" : "");
             if ((held & ((1u << 7) | (1u << 5))) == 0) result += "none";
@@ -304,13 +340,16 @@ namespace CupheadOnline.Sync
             try
             {
                 ClientController.EnsureAssigned(player);
+                uint mappedHeld;
+                uint mapped = ReadMapped(player, out mappedHeld);
                 uint held = 0, down = 0;
                 for (int i = 0; i < PadState.ActionCount; i++)
                 {
                     if (i == 9 || i == 10 || i == 17 || i == 24 || i == 25) continue; // unused ids
-                    bool pressed = player.GetButton(i);
+                    bool direct = (mapped & (1u << i)) != 0;
+                    bool pressed = direct ? (mappedHeld & (1u << i)) != 0 : player.GetButton(i);
                     if (pressed) held |= 1u << i;
-                    bool edge = player.GetButtonDown(i);
+                    bool edge = direct ? pressed && (local.Held & (1u << i)) == 0 : player.GetButtonDown(i);
                     if (edge) down |= 1u << i;
                     // A held transition also recovers a press when Rewired's down edge was unavailable at sampling.
                     // Buffered GetButtonDown may remain true across frames, including after release. Do not
@@ -343,6 +382,10 @@ namespace CupheadOnline.Sync
             hasRemote = false;
             receivedAt = -100f;
             Remote.Reset();
+            Array.Clear(hostButtons.Latest.Presses, 0, hostButtons.Latest.Presses.Length);
+            hostButtons.Reset();
+            hostMapped = 0;
+            hostSampleFrame = -1;
         }
 
         private static double lastInputTime;
@@ -382,6 +425,18 @@ namespace CupheadOnline.Sync
             if (TestDriver.HostPad != null && p.id == 0) return TestDriver.HostPad;
             return null;
         }
+
+        internal static VirtualPad ButtonPadFor(Rewired.Player p, int action)
+        {
+            VirtualPad pad = PadFor(p);
+            if (pad != null) return pad;
+            if (p != null && p.id == 0 && DriveHostPlayerTwo && Session.IsHost && (action == 5 || action == 7))
+            {
+                SampleHostButtons();
+                if ((hostMapped & (1u << action)) != 0) return hostButtons;
+            }
+            return null;
+        }
     }
 
     /// <summary>
@@ -400,18 +455,22 @@ namespace CupheadOnline.Sync
         [HarmonyPatch(typeof(Rewired.Player), "GetButton", new[] { typeof(int) }), HarmonyPrefix]
         private static bool GetButton(Rewired.Player __instance, int actionId, ref bool __result)
         {
+            if (TestDriver.NativeButtonTest && RemoteInput.Sampling && (actionId == 5 || actionId == 7)) { __result = false; return false; }
             if (RemoteInput.Sampling) return true;
-            VirtualPad pad = RemoteInput.PadFor(__instance); if (pad != null) { __result = pad.Button(actionId); return false; }
+            VirtualPad pad = RemoteInput.ButtonPadFor(__instance, actionId); if (pad != null) { __result = pad.Button(actionId); return false; }
             if (Block(__instance)) { __result = false; return false; }
+            if (TestDriver.NativeButtonTest && (actionId == 5 || actionId == 7)) { __result = false; return false; }
             return true;
         }
 
         [HarmonyPatch(typeof(Rewired.Player), "GetButtonDown", new[] { typeof(int) }), HarmonyPrefix]
         private static bool GetButtonDown(Rewired.Player __instance, int actionId, ref bool __result)
         {
+            if (TestDriver.NativeButtonTest && RemoteInput.Sampling && (actionId == 5 || actionId == 7)) { __result = false; return false; }
             if (RemoteInput.Sampling) return true;
-            VirtualPad pad = RemoteInput.PadFor(__instance); if (pad != null) { __result = pad.ButtonDown(actionId); return false; }
+            VirtualPad pad = RemoteInput.ButtonPadFor(__instance, actionId); if (pad != null) { __result = pad.ButtonDown(actionId); return false; }
             if (Block(__instance)) { __result = false; return false; }
+            if (TestDriver.NativeButtonTest && (actionId == 5 || actionId == 7)) { __result = false; return false; }
             return true;
         }
 
@@ -419,7 +478,7 @@ namespace CupheadOnline.Sync
         private static bool GetButtonUp(Rewired.Player __instance, int actionId, ref bool __result)
         {
             if (RemoteInput.Sampling) return true;
-            VirtualPad pad = RemoteInput.PadFor(__instance); if (pad != null) { __result = pad.ButtonUp(actionId); return false; }
+            VirtualPad pad = RemoteInput.ButtonPadFor(__instance, actionId); if (pad != null) { __result = pad.ButtonUp(actionId); return false; }
             if (Block(__instance)) { __result = false; return false; }
             return true;
         }
@@ -446,7 +505,7 @@ namespace CupheadOnline.Sync
         private static bool GetButtonTimePressed(Rewired.Player __instance, int actionId, ref float __result)
         {
             if (RemoteInput.Sampling) return true;
-            VirtualPad pad = RemoteInput.PadFor(__instance); if (pad != null) { __result = pad.TimePressed(actionId); return false; }
+            VirtualPad pad = RemoteInput.ButtonPadFor(__instance, actionId); if (pad != null) { __result = pad.TimePressed(actionId); return false; }
             if (Block(__instance)) { __result = 0f; return false; }
             return true;
         }

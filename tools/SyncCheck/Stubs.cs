@@ -69,13 +69,56 @@ namespace HarmonyLib
 namespace Rewired
 {
     public enum UpdateLoopType { Update, FixedUpdate, OnGUI }
-    public class Controller { }
-    public class Keyboard : Controller { }
+    public enum ControllerType { Keyboard, Joystick }
+    public enum ControllerElementType { Button, Axis }
+    public enum ModifierKey { None, Control }
+    public enum KeyCode { None, LeftShift, Tab, K }
+    public class Controller
+    {
+        public uint Buttons;
+        public bool GetButtonById(int id) => (Buttons & (1u << id)) != 0;
+    }
+    public class Keyboard : Controller
+    {
+        public KeyCode HeldKey;
+        public bool Control;
+        public bool GetKey(KeyCode key) => key != KeyCode.None && key == HeldKey;
+        public bool GetModifierKey(ModifierKey key) => key == ModifierKey.None || Control;
+    }
+    public class ActionElementMap
+    {
+        public int actionId, elementIdentifierId;
+        public bool enabled = true;
+        public ControllerElementType elementType;
+        public KeyCode keyCode;
+        public ModifierKey modifierKey1, modifierKey2, modifierKey3;
+    }
+    public class ControllerMap
+    {
+        public bool enabled = true;
+        public ControllerType controllerType;
+        public int controllerId;
+        public ActionElementMap[] Bindings = Array.Empty<ActionElementMap>();
+        public ActionElementMap[] GetElementMaps() => Bindings;
+        public IList<ActionElementMap> AllMaps => Bindings;
+    }
+    public class MapHelper
+    {
+        public List<ControllerMap> All = new List<ControllerMap>();
+        public IEnumerable<ControllerMap> GetAllMaps() => All;
+    }
+    public class ControllerHelper
+    {
+        public MapHelper maps = new MapHelper();
+        public Controller Assigned;
+        public Controller GetController(ControllerType type, int id) => Assigned;
+    }
     public class Player
     {
         public int id;
         public uint Held;
         public uint Down;
+        public ControllerHelper controllers = new ControllerHelper();
         public bool GetButton(int action) => (Held & (1u << action)) != 0;
         public bool GetButtonDown(int action) => (Down & (1u << action)) != 0;
         public float GetAxis(int action) => 0f;
@@ -136,14 +179,14 @@ namespace CupheadOnline
 namespace CupheadOnline.Sync
 {
     internal static class ClientController { public static void EnsureAssigned(Rewired.Player player) { } }
-    public static class TestDriver { public static VirtualPad HostPad; public static int KeyboardPulse; }
+    public static class TestDriver { public static VirtualPad HostPad; public static int KeyboardPulse; public static bool NativeButtonTest; }
     public static class ClientMirror { public static bool Loading; public static ushort LoadedSerial = 1; public static string LoadedScene = "scene_map"; }
     public static class AudioSync { public static bool Replaying; }
 }
 namespace CupheadOnline.Net
 {
     public enum Role { None, Host, Client }
-    public static class Session { public static Role Role; public static bool Reconnecting; public static Connection Connection; public static bool IsClient => Role == Role.Client; }
+    public static class Session { public static Role Role; public static bool Reconnecting; public static Connection Connection; public static bool IsClient => Role == Role.Client; public static bool IsHost => Role == Role.Host; }
     public interface IDatagramTransport : IDisposable
     {
         bool HasPeer { get; }

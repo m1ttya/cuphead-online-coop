@@ -1,0 +1,41 @@
+waitscene scene_level_dragon
+tap Jump 8
+waitsignal reg019b-ready
+bind Dash LeftShift
+bind SwitchWeapon Tab
+nativebuttons
+signal reg019b-client-ready
+waitsignal reg019b-round0
+physical LeftShift+Tab 12
+state
+signal reg019b-done0
+waitsignal reg019b-round1
+physical LeftShift+Tab 12
+state
+signal reg019b-done1
+waitsignal reg019b-round2
+physical LeftShift+Tab 12
+state
+signal reg019b-done2
+waitsignal reg019b-round3
+physical LeftShift+Tab 12
+state
+signal reg019b-done3
+waitsignal reg019b-round4
+physical LeftShift+Tab 12
+state
+signal reg019b-done4
+waitsignal reg019b-round5
+physical LeftShift+Tab 12
+state
+signal reg019b-done5
+waitsignal reg019b-round6
+physical LeftShift+Tab 12
+state
+signal reg019b-done6
+waitsignal reg019b-retry
+physical LeftShift+Tab 12
+state
+signal reg019b-retry-done
+wait 2
+quit

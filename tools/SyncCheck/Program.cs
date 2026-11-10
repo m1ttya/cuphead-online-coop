@@ -161,6 +161,69 @@ internal static class Program
             "a second physical held transition survives an overlapping native down buffer");
         RemoteInput.ResetClient(); Session.Role = Role.None;
 
+        // Exercise the production map reader and sampler, not RemoteInput.Scripted. Native action state
+        // deliberately stays false throughout, including simultaneous host/client presses and map changes.
+        var mappedPlayer = Rewired.ReInput.players.Local;
+        mappedPlayer.Held = mappedPlayer.Down = 0;
+        var hardware = new Rewired.Controller();
+        mappedPlayer.controllers.Assigned = hardware;
+        var dashBinding = new Rewired.ActionElementMap { actionId = 7, elementIdentifierId = 3 };
+        var switchBinding = new Rewired.ActionElementMap { actionId = 5, elementIdentifierId = 4 };
+        var criticalMap = new Rewired.ControllerMap { controllerType = Rewired.ControllerType.Joystick,
+            Bindings = new[] { dashBinding, switchBinding } };
+        mappedPlayer.controllers.maps.All.Add(criticalMap);
+        Session.Role = Role.Client;
+        for (int cycle = 0; cycle < 600; cycle++)
+        {
+            hardware.Buttons = 0; Step(30f + cycle * .08f, false); sampleBuffered();
+            hardware.Buttons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
+            Step(30.02f + cycle * .08f, false); sampleBuffered();
+            Check(bufferedState.Presses[7] == unchecked((byte)(cycle + 1)) && bufferedState.Presses[5] == unchecked((byte)(cycle + 1)),
+                "mapped physical buttons survive frozen native actions, cycle " + cycle);
+            if (cycle % 10 == 0)
+            {
+                // Replace the map objects as a retry/controller-map reload does; the sampler must not cache them.
+                dashBinding = new Rewired.ActionElementMap { actionId = 7, elementIdentifierId = cycle % 2 == 0 ? 6 : 3 };
+                switchBinding = new Rewired.ActionElementMap { actionId = 5, elementIdentifierId = cycle % 2 == 0 ? 8 : 4 };
+                criticalMap = new Rewired.ControllerMap { controllerType = Rewired.ControllerType.Joystick,
+                    Bindings = new[] { dashBinding, switchBinding } };
+                mappedPlayer.controllers.maps.All[0] = criticalMap;
+            }
+        }
+        hardware.Buttons = 0;
+        Session.Role = Role.Host; RemoteInput.DriveHostPlayerTwo = true; RemoteInput.ResetHost();
+        Step(100f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        hardware.Buttons = (1u << dashBinding.elementIdentifierId) | (1u << switchBinding.elementIdentifierId);
+        Step(100.02f, false); Rewired.ReInput.EndUpdate(Rewired.UpdateLoopType.Update);
+        var hostButtons = RemoteInput.ButtonPadFor(mappedPlayer, 7);
+        Check(hostButtons != null && hostButtons.ButtonDown(7) && hostButtons.ButtonDown(5), "host physical mapped actions bypass frozen native action cache");
+        Step(100.03f, true);
+        Check(hostButtons.ButtonDown(7) && hostButtons.ButtonDown(5), "host mapped actions reach FixedUpdate independently");
+        Input(1, 0, 0, 100.03); Input(2, 1u << 7, 1, 100.03);
+        Check(RemoteInput.Remote.ButtonDown(7) && hostButtons.ButtonDown(7), "simultaneous local and remote dash use independent edge states");
+        Check(RemoteInput.ButtonPadFor(mappedPlayer, 13) == null, "critical-button recovery leaves menu Accept on native path");
+        criticalMap.enabled = false; Step(100.05f, false);
+        Check(RemoteInput.ButtonPadFor(mappedPlayer, 7) == null, "disabled controller map is respected instead of resurrected");
+        criticalMap.enabled = true; dashBinding.elementType = Rewired.ControllerElementType.Axis;
+        Step(100.07f, false);
+        Check(RemoteInput.ButtonPadFor(mappedPlayer, 7) == null && RemoteInput.ButtonPadFor(mappedPlayer, 5) != null,
+            "axis binding falls back to native thresholds without disabling other recovered buttons");
+        mappedPlayer.controllers.maps.All.Clear();
+        var keyboard = new Rewired.Keyboard { HeldKey = Rewired.KeyCode.K };
+        mappedPlayer.controllers.Assigned = keyboard;
+        var keyBinding = new Rewired.ActionElementMap { actionId = 7, keyCode = Rewired.KeyCode.K, modifierKey1 = Rewired.ModifierKey.Control };
+        mappedPlayer.controllers.maps.All.Add(new Rewired.ControllerMap { Bindings = new[] { keyBinding } });
+        uint physical;
+        Check(MappedButtons.Read(mappedPlayer, out physical) == (1u << 7) && physical == 0, "custom keyboard binding requires its configured modifier");
+        keyboard.Control = true;
+        Check(MappedButtons.Read(mappedPlayer, out physical) == (1u << 7) && physical == (1u << 7), "custom keyboard binding uses current key and modifier");
+        mappedPlayer.controllers.Assigned = null;
+        Check(MappedButtons.Read(mappedPlayer, out physical) == 0, "removed controller cannot leave a stale binding active");
+        mappedPlayer.controllers.maps.All.Clear(); RemoteInput.ResetHost(); RemoteInput.ResetClient();
+        Step(101f, true);
+        Check(!hostButtons.ButtonDown(7) && !hostButtons.ButtonDown(5), "host session reset cannot replay zeroed critical-button counters");
+        Session.Role = Role.None; RemoteInput.DriveHostPlayerTwo = false;
+
         var localLabels = new InputLabels(); var remoteLabels = new InputLabels();
         senderTransport = new MemoryTransport(); sender = new Connection(senderTransport);
         receiverTransport = new MemoryTransport(); receiver = new Connection(receiverTransport);

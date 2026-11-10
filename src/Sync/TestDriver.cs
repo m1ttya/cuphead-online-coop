@@ -49,6 +49,8 @@ namespace CupheadOnline.Sync
         public static VirtualPad HostPad;
         public static int KeyboardPulse;
         public static float CaptionFailureUntil;
+        public static bool NativeButtonTest;
+        public static KeyCode[] PhysicalTestKeys = new KeyCode[0];
         public static readonly bool ReadOnlySaves = Environment.GetEnvironmentVariable("CUPHEAD_ONLINE_TEST_READONLY") == "1";
         private static bool keepInvincible, keepRunning;
 
@@ -110,6 +112,28 @@ namespace CupheadOnline.Sync
                 Log("> " + line);
                 switch (a[0])
                 {
+                    case "nativebuttons":
+                        // Keep the real SampleLocal -> packet -> host path. Inject only physical keyboard
+                        // values below action mapping, while forcing the old mapped-action path to fail.
+                        HostPad = null;
+                        RemoteInput.Scripted = null;
+                        NativeButtonTest = true;
+                        Log("Native mapped-button regression enabled; native Dash/Switch actions forced neutral");
+                        break;
+                    case "physical":
+                    {
+                        string[] names = a[1].Split('+');
+                        KeyCode[] keys = new KeyCode[names.Length];
+                        for (int i = 0; i < keys.Length; i++) keys[i] = (KeyCode)Enum.Parse(typeof(KeyCode), names[i]);
+                        for (int i = 0; i < (int)F(a, 2, 1); i++)
+                        {
+                            PhysicalTestKeys = keys;
+                            yield return new WaitForSecondsRealtime(.12f);
+                            PhysicalTestKeys = new KeyCode[0];
+                            yield return new WaitForSecondsRealtime(.18f);
+                        }
+                        break;
+                    }
                     case "signal":
                         Directory.CreateDirectory(signalDirectory);
                         File.WriteAllText(Path.Combine(signalDirectory, Path.GetFileName(a[1])), "ready");
@@ -451,6 +475,15 @@ namespace CupheadOnline.Sync
                         bool correct = RemoteInput.Remote.Latest.Presses[7] == (byte)dash && RemoteInput.Remote.Latest.Presses[5] == (byte)weapon &&
                             RemoteInput.Remote.FixedDownCount(7) == dash && RemoteInput.Remote.FixedDownCount(5) == weapon;
                         Log((correct ? "PASS " : "FAIL ") + RemoteInput.Summary(true));
+                        break;
+                    }
+                    case "expecthostinput":
+                    {
+                        uint dash = (uint)F(a, 1, 0), weapon = (uint)F(a, 2, 0);
+                        VirtualPad input = RemoteInput.ButtonPadFor(Rewired.ReInput.players.GetPlayer(0), 7);
+                        bool correct = input != null && input.Latest.Presses[7] == (byte)dash && input.Latest.Presses[5] == (byte)weapon
+                            && input.FixedDownCount(7) == dash && input.FixedDownCount(5) == weapon;
+                        Log((correct ? "PASS " : "FAIL ") + "host mapped input/physics " + dash + "/" + weapon);
                         break;
                     }
                     case "musicstate":

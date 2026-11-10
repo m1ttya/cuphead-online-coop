@@ -1,0 +1,96 @@
+keeprunning
+waitlink
+invincible
+secondary level_weapon_charge
+level Dragon Normal
+waitscene scene_level_dragon
+waitp2
+wait 3
+bind Dash LeftShift
+bind SwitchWeapon Tab
+nativebuttons
+signal reg019b-ready
+waitsignal reg019b-client-ready
+signal reg019b-round0
+physical LeftShift+Tab 12
+waitsignal reg019b-done0
+wait 1
+expectinput 12 12
+expecthostinput 12 12
+state
+level DicePalaceMain Normal
+wait 9
+waitp2
+signal reg019b-round1
+physical LeftShift+Tab 12
+waitsignal reg019b-done1
+wait 1
+expectinput 24 24
+expecthostinput 24 24
+state
+level DicePalaceBooze Normal
+wait 9
+waitp2
+signal reg019b-round2
+physical LeftShift+Tab 12
+waitsignal reg019b-done2
+wait 1
+expectinput 36 36
+expecthostinput 36 36
+state
+level DicePalaceMain Normal
+wait 9
+waitp2
+signal reg019b-round3
+physical LeftShift+Tab 12
+waitsignal reg019b-done3
+wait 1
+expectinput 48 48
+expecthostinput 48 48
+state
+level DicePalaceChips Normal
+wait 9
+waitp2
+signal reg019b-round4
+physical LeftShift+Tab 12
+waitsignal reg019b-done4
+wait 1
+expectinput 60 60
+expecthostinput 60 60
+state
+level DicePalaceMain Normal
+wait 9
+waitp2
+signal reg019b-round5
+physical LeftShift+Tab 12
+waitsignal reg019b-done5
+wait 1
+expectinput 72 72
+expecthostinput 72 72
+state
+level Veggies Normal
+wait 9
+waitp2
+signal reg019b-round6
+physical LeftShift+Tab 12
+waitsignal reg019b-done6
+wait 1
+expectinput 84 84
+expecthostinput 84 84
+state
+defeat
+wait 6
+expectdeathmenu
+rememberscene
+retrymenu
+waitreload
+waitp2
+wait 4
+signal reg019b-retry
+physical LeftShift+Tab 12
+waitsignal reg019b-retry-done
+wait 1
+expectinput 96 96
+expecthostinput 96 96
+state
+quit

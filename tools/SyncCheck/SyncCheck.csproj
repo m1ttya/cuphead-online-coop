@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/Sync/RemoteInput.cs" Link="RemoteInput.cs" />
+    <Compile Include="../../src/Sync/MappedButtons.cs" Link="MappedButtons.cs" />
     <Compile Include="../../src/Sync/MusicSync.cs" Link="MusicSync.cs" />
     <Compile Include="../../src/Sync/UiDelivery.cs" Link="UiDelivery.cs" />
     <Compile Include="../../src/Sync/UiTextLayout.cs" Link="UiTextLayout.cs" />
